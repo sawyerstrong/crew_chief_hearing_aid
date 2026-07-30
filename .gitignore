@@ -1,0 +1,28 @@
+# Local machine config — device names, key bindings, model paths.
+# Never commit; ships as config.default.toml instead.
+config.toml
+
+# Downloaded model artifacts (see src/pitradio/models.py)
+models/
+*.onnx
+*.bin
+
+# Session logs — these are the tuning artifact, keep them local
+logs/
+*.jsonl
+!tests/fixtures/*.jsonl
+
+# Custom wake word trained on your own voice — personal, not portable
+wakeword_custom/
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/

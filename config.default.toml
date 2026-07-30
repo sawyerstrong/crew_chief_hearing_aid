@@ -1,0 +1,210 @@
+# crew_chief_hearing_aid defaults. DO NOT EDIT — copy the bits you need into your own
+# %APPDATA%\crew_chief_hearing_aid\config.toml, which is merged over this file at startup.
+# Run `crew_chief_hearing_aid init-config` to create that file.
+
+[audio]
+# Matched as a case-insensitive substring against enumerated input devices.
+# Never a bare index: device indices reshuffle across reboots and USB replugs,
+# and this rig has four active microphones plus NVIDIA Broadcast's virtual
+# endpoints. Run `crew_chief_hearing_aid devices` to list what is available.
+input_device = "USB PnP Audio Device"
+sample_rate = 16000
+block_ms = 32
+# Rolling audio kept before wake-word fires, so the command that follows it
+# immediately is not clipped.
+preroll_ms = 512
+# Stop capturing after this much trailing silence.
+silence_timeout_ms = 900
+# Hard cap on a single utterance.
+max_utterance_ms = 6000
+
+[wakeword]
+enabled = true
+# Pretrained and speaker-independent. A model trained on your own voice is more
+# accurate but is not portable to another person's machine — keep those in
+# wakeword_custom/ and point `model` at one there if you train one.
+model = "hey_jarvis"
+threshold = 0.55
+# Refractory period so one utterance cannot retrigger the pipeline.
+cooldown_ms = 1500
+
+[vad]
+enabled = true
+threshold = 0.5
+
+[asr]
+# tiny.en is ~150ms for a 2s utterance on CPU and is sufficient because the
+# downstream stage classifies rather than reads. Move to base.en if the
+# transcript log shows genuine word errors on your command set.
+model = "tiny.en"
+device = "cpu"
+compute_type = "int8"
+beam_size = 1
+# Bias the decoder toward racing vocabulary.
+initial_prompt = "Race engineer radio: lap time, gap, fuel, tyres, pit, sector, position, delta."
+
+[intent]
+# model2vec static embeddings. "hashing" needs no download and is the fallback
+# if model fetching fails; "sentence-transformers" pulls torch.
+embedder = "model2vec"
+embedder_model = "minishlab/potion-base-8M"
+token_threshold = 0.72
+embed_threshold = 0.60
+# Reject when the top two intents are this close, even if the best score is
+# high. Asking again beats firing the wrong command.
+margin = 0.05
+
+[output]
+# "keypress" needs no CrewChief changes — bind the keys below in CrewChief's
+# Add/Remove Actions. "pipe" targets a forked CrewChief exposing a named pipe
+# into handleRecognisedText, which unlocks commands that are not button-bindable
+# (gap ahead/behind among them). "log" is a dry run.
+sink = "keypress"
+pipe_name = "crewchief-voice"
+# Hold time for the synthetic keypress. CrewChief polls controllers at
+# hold_button_poll_frequency (100ms by default), so anything under ~120ms can be
+# missed entirely.
+key_hold_ms = 150
+
+[logging]
+# Every utterance gets a JSONL record: transcript, chosen intent, score, method,
+# runner-up. This is the artifact for tuning thresholds and spotting phrases
+# that need adding — without it you cannot tell a bad transcript from a bad
+# threshold.
+dir = "logs"
+level = "INFO"
+save_audio_on_reject = true
+
+
+# --- Intents -----------------------------------------------------------
+# `action` is the label in CrewChief's Add/Remove Actions dialog; bind it to
+# `key` there. F13–F24 are chosen deliberately: no physical keyboard has them,
+# so nothing else on the system will ever emit them.
+
+[[intents]]
+id = "car_ahead_last_lap"
+action = "What's the car ahead's last lap time"
+key = "F13"
+phrases = [
+  "what is the car ahead's last lap time",
+  "what's the guy in front running",
+  "what is the car in front lapping",
+  "how fast is the car ahead going",
+  "what lap time is the guy ahead doing",
+]
+
+[[intents]]
+id = "car_behind_last_lap"
+action = "What's the car behind's last lap time"
+key = "F14"
+phrases = [
+  "what is the car behind's last lap time",
+  "what's the guy behind running",
+  "what is the car behind lapping",
+  "how fast is the car behind going",
+  "what lap time is the guy behind doing",
+]
+
+[[intents]]
+id = "fuel_status"
+action = "Get fuel status"
+key = "F15"
+phrases = [
+  "how is my fuel looking",
+  "what is my fuel status",
+  "how much fuel do i have left",
+  "how many laps of fuel left",
+]
+
+[[intents]]
+id = "car_status"
+action = "Get car status"
+key = "F16"
+phrases = [
+  "what is my car status",
+  "how is the car looking",
+  "give me a car status report",
+]
+
+[[intents]]
+id = "damage_report"
+action = "Get damage report"
+key = "F17"
+phrases = [
+  "what is my damage report",
+  "how bad is the damage",
+  "do i have any damage",
+]
+
+[[intents]]
+id = "session_status"
+action = "Get session status"
+key = "F18"
+phrases = [
+  "what is my session status",
+  "how long is left in this session",
+  "how many laps to go",
+  "where am i in the session",
+]
+
+[[intents]]
+id = "status"
+action = "Get status"
+key = "F19"
+phrases = [
+  "give me a full status report",
+  "what is my status",
+  "how am i doing out there",
+]
+
+[[intents]]
+id = "pit_prediction"
+action = "Pit prediction"
+key = "F20"
+phrases = [
+  "what is the pit prediction",
+  "where will i come out if i pit now",
+  "what happens if i pit this lap",
+]
+
+[[intents]]
+id = "repeat_last"
+action = "Repeat last message"
+key = "F21"
+phrases = [
+  "say that again",
+  "repeat the last message",
+  "what was that",
+  "come again",
+]
+
+[[intents]]
+id = "toggle_mute"
+action = "Toggle mute"
+key = "F22"
+phrases = [
+  "be quiet for a bit",
+  "mute yourself",
+  "stop talking to me",
+  "unmute yourself",
+]
+
+[[intents]]
+id = "toggle_spotter"
+action = "Toggle Spotter on/off"
+key = "F23"
+phrases = [
+  "turn the spotter off",
+  "turn the spotter on",
+  "toggle the spotter",
+]
+
+[[intents]]
+id = "toggle_race_updates"
+action = "Toggle race updates on/off"
+key = "F24"
+phrases = [
+  "turn race updates off",
+  "turn race updates on",
+  "toggle race updates",
+]

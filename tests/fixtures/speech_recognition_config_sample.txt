@@ -1,0 +1,14 @@
+# Excerpt of CrewChief V4's speech_recognition_config.txt format.
+# The short trailing aliases here are the real ones that cause long utterances
+# to collapse onto the wrong command at high confidence.
+
+WHAT_WAS_MY_LAST_LAP_TIME = what's my last lap time:last lap time:lap time:what's my lap time
+WHATS_MY_GAP_IN_FRONT = what's the gap ahead:what's the gap in front:what's my gap ahead:gap in front:gap ahead
+WHATS_MY_GAP_BEHIND = what's the gap behind:what's my gap behind:gap behind
+WHATS_MY_POSITION = what's my position
+WHATS_MY_BEST_LAP_TIME = what's my best lap time:best lap time:best lap
+
+# a comment line
+   # an indented comment
+NOT_A_SETTING_LINE
+EMPTY_VALUE =

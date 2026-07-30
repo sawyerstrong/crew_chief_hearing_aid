@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # Both platforms: the matcher is platform-independent and should stay that
+    # way, but the rig is Windows and that is where it has to actually work.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check src tests
+
+      - name: Test
+        # No model downloads and no audio hardware: the eval runs against the
+        # HashingEmbedder, so this is deterministic and offline.
+        run: pytest -q --cov=crew_chief_hearing_aid --cov-report=term-missing

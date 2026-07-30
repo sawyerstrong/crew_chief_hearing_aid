@@ -1,0 +1,47 @@
+// Eval set. One JSON object per line. `intent: null` means "must be rejected".
+// Grow this from logs/utterances-*.jsonl after every session.
+{"text": "what is the car ahead's last lap time", "intent": "car_ahead_last_lap"}
+{"text": "what's the guy in front running", "intent": "car_ahead_last_lap"}
+{"text": "how fast is the car ahead going", "intent": "car_ahead_last_lap"}
+{"text": "what lap time is the guy ahead doing", "intent": "car_ahead_last_lap"}
+{"text": "what is the car behind's last lap time", "intent": "car_behind_last_lap"}
+{"text": "what's the guy behind running", "intent": "car_behind_last_lap"}
+{"text": "how fast is the car behind going", "intent": "car_behind_last_lap"}
+{"text": "what lap time is the guy behind doing", "intent": "car_behind_last_lap"}
+{"text": "how is my fuel looking", "intent": "fuel_status"}
+{"text": "what is my fuel status", "intent": "fuel_status"}
+{"text": "how much fuel do i have left", "intent": "fuel_status"}
+{"text": "how many laps of fuel left", "intent": "fuel_status"}
+{"text": "what is my car status", "intent": "car_status"}
+{"text": "how is the car looking", "intent": "car_status"}
+{"text": "what is my damage report", "intent": "damage_report"}
+{"text": "do i have any damage", "intent": "damage_report"}
+{"text": "how bad is the damage", "intent": "damage_report"}
+{"text": "what is my session status", "intent": "session_status"}
+{"text": "how many laps to go", "intent": "session_status"}
+{"text": "how long is left in this session", "intent": "session_status"}
+{"text": "give me a full status report", "intent": "status"}
+{"text": "how am i doing out there", "intent": "status"}
+{"text": "what is the pit prediction", "intent": "pit_prediction"}
+{"text": "where will i come out if i pit now", "intent": "pit_prediction"}
+{"text": "what happens if i pit this lap", "intent": "pit_prediction"}
+{"text": "say that again", "intent": "repeat_last"}
+{"text": "repeat the last message", "intent": "repeat_last"}
+{"text": "what was that", "intent": "repeat_last"}
+{"text": "be quiet for a bit", "intent": "toggle_mute"}
+{"text": "mute yourself", "intent": "toggle_mute"}
+{"text": "stop talking to me", "intent": "toggle_mute"}
+{"text": "turn the spotter off", "intent": "toggle_spotter"}
+{"text": "turn the spotter on", "intent": "toggle_spotter"}
+{"text": "toggle the spotter", "intent": "toggle_spotter"}
+{"text": "turn race updates off", "intent": "toggle_race_updates"}
+{"text": "toggle race updates", "intent": "toggle_race_updates"}
+{"text": "turn race updates on", "intent": "toggle_race_updates"}
+// Filler and politeness must not change routing.
+{"text": "hey can you tell me how is my fuel looking please", "intent": "fuel_status"}
+{"text": "ok so what is my damage report", "intent": "damage_report"}
+// Must be rejected: conversation, Discord chatter, sim audio bleed.
+{"text": "what do you want for dinner tonight", "intent": null}
+{"text": "i think the setup is way too loose on entry", "intent": null}
+{"text": "yeah i saw that replay it was ridiculous", "intent": null}
+{"text": "", "intent": null}
