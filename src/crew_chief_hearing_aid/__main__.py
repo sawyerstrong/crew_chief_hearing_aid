@@ -15,6 +15,7 @@ import shutil
 import sys
 
 from .config import Config, default_config_path, load_config, user_config_path
+from .intent.phrases import Intent
 from .logging_setup import setup_logging
 
 
@@ -235,33 +236,37 @@ def cmd_setup(args) -> int:
         set_values(updates)
         print("  written")
 
-    # --- 4. the risky bit, before the tedious bit -----------------------
-    _step(4, total, "Verify one keypress reaches CrewChief")
+    # --- 4. bind one action, which also proves the sink ------------------
+    _step(4, total, "Bind one action (this also proves the sink)")
     config = _load(args)
     probe = config.intents[0]
-    print("This is the highest-risk unknown in the project. If synthetic scancodes")
-    print("do not reach CrewChief, all 27 bindings are worthless — so settle it now,")
-    print("with one action, before binding the rest.\n")
+    print("F13-F24 have no physical keys — that is why nothing else on the system")
+    print("can ever emit them, and why CrewChief's Assign dialog cannot capture")
+    print("them from your keyboard. We send the key ourselves instead.\n")
+    print("That is the useful part: it is the same SendInput path used at runtime,")
+    print("so if the bind lands, the sink is proven. One step, both answers.\n")
     print("  1. Start CrewChief")
     print("  2. Add/Remove Actions -> add:")
     print(f"       {probe.action}")
-    print(f"  3. Assign it to: {probe.key}")
-    if _ask("\nDone that?", default=False):
-        args.intent, args.delay, args.force, args.dry_run = probe.id, 3, False, False
-        cmd_test_key(args)
-        if not _ask("\nDid CrewChief respond?", default=False):
-            print("\nStop here. Binding the other 26 will not help — the sink is the")
-            print("problem. Check that CrewChief is running and focused, and that the")
-            print("action really is assigned to that key.")
+    print("  3. Select it, click Assign, and leave the dialog waiting")
+    if _ask("\nDialog waiting?", default=False):
+        args.key, args.delay = probe.id, 4
+        cmd_send_key(args)
+        if not _ask("\nDid CrewChief capture the key?", default=False):
+            print("\nStop here. Binding the other 26 will not help — CrewChief is not")
+            print("seeing injected scancodes, so the runtime sink cannot work either.")
+            print("That is the thing to fix; everything else is downstream of it.")
             return 1
-        print("\n  Confirmed. The sink works.")
+        print("\n  Confirmed. Binding works, and so does the runtime sink.")
     else:
-        print("  Skipped — run `test-key` before trusting the bindings.")
+        print("  Skipped — run `send-key` before trusting any of the bindings.")
 
     # --- 5. the rest of the bindings ------------------------------------
     _step(5, total, "Bind the remaining actions")
-    print("Now the tedious part, but you know it will work.\n")
+    print("Same routine for each: add the action, click Assign, then run")
+    print("`cchear send-key <id>` while the dialog waits.\n")
     cmd_bindings(args)
+    print("\nTip: `cchear bind-all` walks every remaining action in one pass.")
 
     # --- 6. check -------------------------------------------------------
     _step(6, total, "Check")
@@ -347,6 +352,153 @@ def cmd_setup_ptt(args) -> int:
     print(f"\nWritten to {target}")
     print("Bound by device GUID, not index — a replugged wheel is detected rather")
     print("than silently mapping push-to-talk onto a different device.")
+    return 0
+
+
+def cmd_send_key(args) -> int:
+    """Inject a keypress while CrewChief's Assign dialog is listening.
+
+    F13-F24 have no physical keys, which is exactly why they cannot collide
+    with a sim or Windows binding -- and exactly why CrewChief's
+    press-the-key-to-bind dialog cannot capture them from hardware. So we send
+    it ourselves, through the same SendInput path used at runtime.
+
+    That equivalence is the useful part: if the bind lands, the runtime sink is
+    proven to reach CrewChief. Binding and verifying become one step.
+    """
+    import time
+
+    from .output.keypress import SCAN_CODES, KeypressSink, normalize_key
+
+    config = _load(args)
+    intent = config.intent_by_id(args.key)
+    if intent is not None:
+        key_spec, label = intent.key, intent.action
+    else:
+        key_spec, label = args.key, "(raw key)"
+        try:
+            normalize_key(key_spec)  # raises on an unparseable spec
+        except ValueError as exc:
+            print(f"! {exc}", file=sys.stderr)
+            return 1
+
+    probe = Intent(
+        id="__send__", action=label, key=key_spec, phrases=("x",), description="x"
+    )
+    sink = KeypressSink(hold_ms=int(config.get("output", "key_hold_ms", 150)))
+    problems = sink.preflight([probe])
+    for problem in problems:
+        print(f"! {problem}", file=sys.stderr)
+    if problems:
+        print(f"\nKnown keys: {', '.join(sorted(SCAN_CODES))}", file=sys.stderr)
+        return 1
+
+    print(f"Key    : {normalize_key(key_spec)}")
+    print(f"Action : {label}")
+    print("\nIn CrewChief: select the action, click Assign, then leave it waiting.")
+    for remaining in range(args.delay, 0, -1):
+        print(f"  sending in {remaining}... ", end="\r", flush=True)
+        time.sleep(1)
+    print(" " * 40, end="\r")
+
+    delivered = sink.fire(probe)
+    sink.close()
+    if not delivered:
+        print("! send failed", file=sys.stderr)
+        return 1
+
+    print(f"Sent {normalize_key(key_spec)}.")
+    print("\nIf CrewChief captured it, the binding is done AND the runtime sink is")
+    print("proven — it is the same SendInput path. If the dialog is still waiting,")
+    print("CrewChief is not seeing injected scancodes; stop and fix that first.")
+    return 0
+
+
+def cmd_bind_all(args) -> int:
+    """Walk every action, injecting its key while CrewChief's dialog waits.
+
+    Why not write CrewChief's user.config directly? It is tempting -- 27
+    dialogs is tedious -- but:
+
+      * CrewChief rewrites user.config on exit, so anything written while it
+        runs is discarded.
+      * The keyboard `button_index` encoding is undocumented, and a wrong guess
+        writes a binding that looks right and silently never fires.
+      * Two of the 27 actions have no settings entry at all until CrewChief
+        creates one.
+
+    Letting CrewChief capture an injected key makes CrewChief author its own
+    encoding, which is correct by construction. It also proves the runtime sink
+    on the first action, since it is the same SendInput path.
+    """
+    import time
+
+    from .output.keypress import KeypressSink, normalize_key
+
+    config = _load(args)
+    intents = config.intents
+    if args.only:
+        wanted = set(args.only)
+        intents = [i for i in intents if i.id in wanted]
+        missing = wanted - {i.id for i in intents}
+        if missing:
+            print(f"! unknown intent ids: {', '.join(sorted(missing))}", file=sys.stderr)
+            return 1
+
+    sink = KeypressSink(hold_ms=int(config.get("output", "key_hold_ms", 150)))
+    problems = sink.preflight(intents)
+    for problem in problems:
+        print(f"! {problem}", file=sys.stderr)
+    if problems:
+        return 1
+
+    print(f"Binding {len(intents)} actions.\n")
+    print("For each one, in CrewChief:")
+    print("  Add/Remove Actions -> add the action -> select it -> click Assign")
+    print("Then press Enter here and the key is injected into the waiting dialog.\n")
+    print("Enter = send, s = skip, q = stop.\n")
+
+    done, skipped = 0, 0
+    for n, intent in enumerate(intents, 1):
+        key = normalize_key(intent.key)
+        print(f"[{n}/{len(intents)}] {intent.action}")
+        print(f"          -> {key}")
+        try:
+            answer = input("          Assign dialog waiting? [Enter/s/q] ").strip().lower()
+        except EOFError:
+            answer = "q"
+        if answer.startswith("q"):
+            print("\nStopped.")
+            break
+        if answer.startswith("s"):
+            skipped += 1
+            print()
+            continue
+
+        for remaining in range(args.delay, 0, -1):
+            print(f"          sending in {remaining}... ", end="\r", flush=True)
+            time.sleep(1)
+        print(" " * 44, end="\r")
+        sink.fire(intent)
+        print(f"          sent {key}")
+        done += 1
+
+        if n == 1:
+            # The first one is the real test. If CrewChief did not capture it,
+            # nothing downstream can work and 26 more will not help.
+            if not _ask("\n          Did CrewChief capture it?", default=False):
+                print("\nStop. CrewChief is not seeing injected scancodes, so the")
+                print("runtime sink cannot work either. Fix that before continuing.")
+                sink.close()
+                return 1
+            print("          Confirmed — binding and runtime sink both work.\n")
+        else:
+            print()
+
+    sink.close()
+    print(f"\n{done} sent, {skipped} skipped.")
+    print("Run `cchear doctor` to confirm CrewChief recorded them.")
+    print("CrewChief writes its config on exit — close it before checking.")
     return 0
 
 
@@ -500,6 +652,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the config block instead of writing it",
     )
     ptt.set_defaults(func=cmd_setup_ptt)
+
+    sendkey = sub.add_parser(
+        "send-key", help="inject a key into CrewChief's waiting Assign dialog"
+    )
+    sendkey.add_argument("key", help="intent id, or a raw key like F13 / ctrl+F14")
+    sendkey.add_argument("--delay", type=int, default=4)
+    sendkey.set_defaults(func=cmd_send_key)
+
+    bindall = sub.add_parser(
+        "bind-all", help="walk every action, injecting its key as you click Assign"
+    )
+    bindall.add_argument("--delay", type=int, default=3)
+    bindall.add_argument("--only", nargs="*", help="restrict to these intent ids")
+    bindall.set_defaults(func=cmd_bind_all)
 
     testkey = sub.add_parser(
         "test-key", help="fire one keypress to check CrewChief receives it"
