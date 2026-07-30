@@ -1,6 +1,13 @@
 from .embedder import Embedder, HashingEmbedder, Model2VecEmbedder, SentenceTransformerEmbedder
-from .matcher import IntentMatcher, MatchResult, token_f1
-from .phrases import Intent, canonical_key, content_tokens, normalize, parse_crewchief_config
+from .matcher import IntentMatcher, MatchResult, build_idf, query_coverage
+from .phrases import (
+    Intent,
+    canonical_key,
+    content_tokens,
+    normalize,
+    parse_crewchief_config,
+    split_compounds,
+)
 
 __all__ = [
     "Embedder",
@@ -10,11 +17,13 @@ __all__ = [
     "MatchResult",
     "Model2VecEmbedder",
     "SentenceTransformerEmbedder",
+    "build_idf",
     "canonical_key",
     "content_tokens",
     "normalize",
     "parse_crewchief_config",
-    "token_f1",
+    "query_coverage",
+    "split_compounds",
 ]
 
 

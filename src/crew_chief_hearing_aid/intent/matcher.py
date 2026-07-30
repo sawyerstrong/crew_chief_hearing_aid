@@ -30,12 +30,13 @@ precisely the collapse this project exists to avoid. F1 scores that pair at
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
 
 from .embedder import Embedder, l2_normalize
-from .phrases import Intent, canonical_key, content_tokens
+from .phrases import Intent, canonical_key, content_tokens, split_compounds
 
 
 @dataclass(frozen=True)
@@ -64,17 +65,61 @@ class MatchResult:
         }
 
 
-def token_f1(a: tuple[str, ...], b: tuple[str, ...]) -> float:
-    """Symmetric overlap of two token sequences, as F1 over their token sets."""
-    sa, sb = set(a), set(b)
-    if not sa or not sb:
-        return 0.0
-    overlap = len(sa & sb)
-    if overlap == 0:
-        return 0.0
-    precision = overlap / len(sa)
-    recall = overlap / len(sb)
-    return 2 * precision * recall / (precision + recall)
+def build_idf(phrase_tokens: list[tuple[str, ...]]) -> dict[str, float]:
+    """Smoothed inverse document frequency over the phrase corpus.
+
+    A token appearing in one phrase is highly discriminative ("ahead", "fuel");
+    one appearing in most phrases carries almost no signal ("what", "my", "is").
+    Weighting by IDF is what separates the car-ahead and car-behind intents,
+    whose phrases are otherwise near-identical.
+    """
+    n = len(phrase_tokens)
+    df: dict[str, int] = {}
+    for tokens in phrase_tokens:
+        for token in set(tokens):
+            df[token] = df.get(token, 0) + 1
+    return {t: math.log((n + 1) / (c + 1)) + 1.0 for t, c in df.items()}
+
+
+def query_coverage(
+    query: tuple[str, ...],
+    phrase: tuple[str, ...],
+    idf: dict[str, float],
+    default_idf: float = 1.0,
+) -> tuple[float, float]:
+    """How much of what the user *said* is explained by this phrase.
+
+    Returns (ratio, matched_mass) where ratio is IDF-weighted coverage in [0,1]
+    and matched_mass is the absolute IDF weight matched.
+
+    Asymmetric on purpose, and in the opposite direction from containment.
+    Two cases have to be separated, and symmetric F1 blocks both:
+
+    * P3 (must reject): user says "whats the lap time of the car ahead" and a
+      short registered alias "lap time" tries to claim it. Coverage is low
+      because the high-IDF "ahead" is unmatched.
+    * Terse input (must accept): user says "car ahead laptime" against the
+      phrase "what is the car ahead's last lap time". Every query token is
+      explained, so coverage is 1.0 -- even though most of the phrase is
+      unmatched, which is exactly what F1 penalised.
+
+    `matched_mass` exists because ratio alone has a degenerate case: a query of
+    one common word ("what") is fully covered by any phrase containing it.
+    Requiring absolute evidence as well as proportion rules that out.
+    """
+    if not query:
+        return 0.0, 0.0
+    phrase_set = set(phrase)
+    total = 0.0
+    matched = 0.0
+    for token in set(query):
+        weight = idf.get(token, default_idf)
+        total += weight
+        if token in phrase_set:
+            matched += weight
+    if total <= 0.0:
+        return 0.0, 0.0
+    return matched / total, matched
 
 
 class IntentMatcher:
@@ -86,6 +131,7 @@ class IntentMatcher:
         token_threshold: float = 0.72,
         embed_threshold: float = 0.60,
         margin: float = 0.05,
+        min_evidence: float = 2.0,
     ) -> None:
         if not intents:
             raise ValueError("IntentMatcher requires at least one intent")
@@ -98,6 +144,7 @@ class IntentMatcher:
         self.token_threshold = token_threshold
         self.embed_threshold = embed_threshold
         self.margin = margin
+        self.min_evidence = min_evidence
 
         self._by_id = {i.id: i for i in intents}
         # canonical phrase key -> intent id. First writer wins, so an earlier
@@ -114,7 +161,17 @@ class IntentMatcher:
                 self._tokens.append((intent.id, content_tokens(phrase)))
                 self._corpus.append((intent.id, phrase))
 
+        # Vocabulary drives compound splitting ("laptime" -> "lap time"); IDF
+        # drives tier-2 weighting. Both are derived from the corpus, so adding
+        # an intent automatically re-tunes them.
+        self._vocabulary = frozenset(t for _, toks in self._tokens for t in toks)
+        self._idf = build_idf([toks for _, toks in self._tokens])
+
         self._corpus_vecs: np.ndarray | None = None
+
+    def prepare_query(self, transcript: str) -> tuple[str, ...]:
+        """Normalise, stem, and compound-split a transcript into query tokens."""
+        return split_compounds(content_tokens(transcript), self._vocabulary)
 
     # -- tier 3 support -------------------------------------------------
 
@@ -182,11 +239,15 @@ class IntentMatcher:
         if key in self._exact:
             return MatchResult(transcript, self._by_id[self._exact[key]], 1.0, "exact")
 
-        # Tier 2: token overlap
-        query = content_tokens(transcript)
+        # Tier 2: IDF-weighted query coverage
+        query = self.prepare_query(transcript)
         token_scores: dict[str, float] = {}
         for intent_id, phrase_tokens in self._tokens:
-            score = token_f1(query, phrase_tokens)
+            ratio, mass = query_coverage(query, phrase_tokens, self._idf)
+            # Absolute evidence gate: a query of only low-information words is
+            # fully "covered" by anything containing them. Score it as zero
+            # rather than letting the ratio carry it.
+            score = ratio if mass >= self.min_evidence else 0.0
             if score > token_scores.get(intent_id, 0.0):
                 token_scores[intent_id] = score
         result = self._finalize(transcript, token_scores, self.token_threshold, "token")

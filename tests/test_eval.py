@@ -65,6 +65,40 @@ def test_utterance_routes_correctly(matcher, case):
         )
 
 
+class TestEvidenceGate:
+    """The absolute-evidence gate, against the real corpus.
+
+    IDF is corpus-relative, so `min_evidence` is only meaningful at realistic
+    corpus size. These assert the gate against the shipped intent set rather
+    than a toy fixture.
+    """
+
+    def test_filler_only_query_is_rejected(self, matcher):
+        assert not matcher.match("what is my").matched
+
+    def test_single_discriminative_word_is_enough(self, matcher):
+        for word, expected in [("fuel", "fuel_status"), ("damage", "damage_report")]:
+            result = matcher.match(word)
+            assert result.matched, f"{word!r} rejected ({result.reject_reason})"
+            assert result.intent.id == expected
+
+    def test_terse_phrasing_resolves_without_the_embedder(self, matcher):
+        """The case that motivated the tier-2 rewrite.
+
+        Must resolve at tier 2 -- microseconds, deterministic, no model. If
+        this starts matching via "embedding", the cheap path has regressed.
+        """
+        for text, expected in [
+            ("car ahead laptime", "car_ahead_last_lap"),
+            ("car behind laptime", "car_behind_last_lap"),
+            ("car ahead lap time", "car_ahead_last_lap"),
+        ]:
+            result = matcher.match(text)
+            assert result.matched, f"{text!r} rejected ({result.reject_reason})"
+            assert result.intent.id == expected
+            assert result.method == "token", f"{text!r} fell through to {result.method}"
+
+
 def test_every_intent_has_coverage(matcher):
     """No intent should ship without at least one eval case."""
     covered = {c["intent"] for c in load_cases() if c["intent"]}

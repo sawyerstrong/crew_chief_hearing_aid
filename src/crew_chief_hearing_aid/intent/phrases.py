@@ -64,9 +64,55 @@ def normalize(text: str) -> str:
     return _WS.sub(" ", text).strip()
 
 
+def _depluralize(token: str) -> str:
+    """Fold possessives and simple plurals onto a common stem.
+
+    Needed because apostrophe stripping turns "ahead's" into "aheads", which
+    would otherwise never match a spoken "ahead" -- and "ahead" is the single
+    most discriminative token separating the car-ahead and car-behind intents.
+
+    Deliberately crude: no stemmer, no wordlist. Over-folding is *mostly*
+    harmless because query and corpus go through the same function and fold
+    together -- but the `-us`/`-is`/`-as`/`-os` guard is load-bearing, not
+    cosmetic: without it "status" becomes "statu" and "bias" becomes "bia",
+    which is both wrong and unreadable in the diagnostic log.
+    """
+    if len(token) > 3 and token.endswith("es") and token[-3] in "sxzh":
+        return token[:-2]
+    if len(token) > 2 and token.endswith("s") and token[-2] not in "suioa":
+        return token[:-1]
+    return token
+
+
 def content_tokens(text: str) -> tuple[str, ...]:
-    """Normalised tokens with filler words removed."""
-    return tuple(t for t in normalize(text).split() if t not in _FILLER)
+    """Normalised, stemmed tokens with filler words removed."""
+    return tuple(
+        _depluralize(t) for t in normalize(text).split() if t not in _FILLER
+    )
+
+
+def split_compounds(tokens: tuple[str, ...], vocabulary: frozenset[str]) -> tuple[str, ...]:
+    """Split run-together words against a known vocabulary.
+
+    "laptime" -> ("lap", "time") when both halves are in the corpus. Speech is
+    transcribed as it is spoken, and people say compounds as one word; Whisper
+    faithfully reproduces that. Rather than hardcode a compound list, any token
+    absent from the vocabulary is tried against every binary split, and the
+    split is accepted only when *both* halves are known words.
+    """
+    out: list[str] = []
+    for token in tokens:
+        if token in vocabulary or len(token) < 4:
+            out.append(token)
+            continue
+        for i in range(2, len(token) - 1):
+            left, right = token[:i], token[i:]
+            if left in vocabulary and right in vocabulary:
+                out.extend((left, right))
+                break
+        else:
+            out.append(token)
+    return tuple(out)
 
 
 def canonical_key(text: str) -> str:

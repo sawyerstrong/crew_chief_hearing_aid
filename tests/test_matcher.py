@@ -1,8 +1,8 @@
 import pytest
 
 from crew_chief_hearing_aid.intent.embedder import HashingEmbedder
-from crew_chief_hearing_aid.intent.matcher import IntentMatcher, token_f1
-from crew_chief_hearing_aid.intent.phrases import Intent, content_tokens
+from crew_chief_hearing_aid.intent.matcher import IntentMatcher, build_idf, query_coverage
+from crew_chief_hearing_aid.intent.phrases import Intent, content_tokens, split_compounds
 
 
 @pytest.fixture
@@ -46,29 +46,79 @@ def matcher(intents):
     return IntentMatcher(intents, embedder=HashingEmbedder())
 
 
-class TestTokenF1:
-    def test_identical(self):
-        assert token_f1(("a", "b"), ("a", "b")) == pytest.approx(1.0)
+class TestQueryCoverage:
+    @pytest.fixture
+    def idf(self):
+        return build_idf([
+            content_tokens("what is the car ahead's last lap time"),
+            content_tokens("what is the car behind's last lap time"),
+            content_tokens("what is my fuel status"),
+        ])
 
-    def test_disjoint(self):
-        assert token_f1(("a",), ("b",)) == 0.0
+    def test_fully_explained_query_scores_one(self, idf):
+        """A terse query whose every token appears in the phrase scores 1.0.
 
-    def test_is_symmetric_not_containment(self):
-        """The property the whole design rests on.
-
-        A short registered phrase must NOT score 1.0 against a long utterance
-        that contains it -- that containment behaviour is exactly how CrewChief's
-        closed grammar fires the wrong command at high confidence.
+        This is the case symmetric F1 structurally could not match: 3 query
+        tokens against a 7-token phrase capped recall at 0.43, so F1 capped
+        near 0.6 -- below any usable threshold.
         """
-        short = content_tokens("lap time")
-        long = content_tokens("what's the lap time of the car ahead")
+        query = content_tokens("car ahead lap time")
+        phrase = content_tokens("what is the car ahead's last lap time")
+        ratio, mass = query_coverage(query, phrase, idf)
+        assert ratio == pytest.approx(1.0)
+        assert mass > 0
 
-        # Containment would score this 1.0 — every token of the short phrase is
-        # present in the long one — and fire the wrong command.
-        assert set(short) <= set(long)
-        # F1 scores it 0.5, comfortably under the 0.72 default token_threshold.
-        assert token_f1(short, long) == pytest.approx(0.5)
-        assert token_f1(short, long) == pytest.approx(token_f1(long, short))
+    def test_short_alias_does_not_capture_long_query(self, idf):
+        """P3, stated as a property rather than assumed.
+
+        The registered alias "lap time" must not claim an utterance that is
+        mostly about something else. Containment scores this 1.0; IDF-weighted
+        query coverage scores it low because the discriminative "ahead" and
+        "car" go unexplained.
+        """
+        query = content_tokens("what's the lap time of the car ahead")
+        alias = content_tokens("lap time")
+        assert set(alias) <= set(query)  # containment would fire
+        ratio, _ = query_coverage(query, alias, idf)
+        assert ratio < 0.6
+
+    def test_discriminative_token_separates_ahead_from_behind(self, idf):
+        query = content_tokens("car ahead lap time")
+        ahead = content_tokens("what is the car ahead's last lap time")
+        behind = content_tokens("what is the car behind's last lap time")
+        assert query_coverage(query, ahead, idf)[0] > query_coverage(query, behind, idf)[0]
+
+    def test_ratio_alone_is_degenerate_for_common_words(self, idf):
+        """Why matched_mass exists at all.
+
+        A query of only common words is "fully covered" by ratio, so ratio
+        cannot be the whole gate. The absolute-evidence check is exercised
+        against the real shipped corpus in TestEvidenceGate below -- a
+        three-phrase fixture cannot demonstrate it, because IDF floors at 1.0
+        by construction and any three tokens clear an absolute threshold of 2.0
+        regardless of how common they are.
+        """
+        ratio, _ = query_coverage(
+            content_tokens("what is my"), content_tokens("what is my fuel status"), idf
+        )
+        assert ratio == pytest.approx(1.0)
+
+    def test_empty_query(self, idf):
+        assert query_coverage((), content_tokens("anything"), idf) == (0.0, 0.0)
+
+
+class TestNormalisation:
+    def test_possessive_folds_onto_stem(self):
+        """"ahead's" -> "aheads" would never match a spoken "ahead"."""
+        assert "ahead" in content_tokens("what is the car ahead's last lap time")
+
+    def test_compound_splits_against_vocabulary(self):
+        vocab = frozenset({"lap", "time", "car", "ahead"})
+        assert split_compounds(("laptime",), vocab) == ("lap", "time")
+
+    def test_unknown_compound_is_left_alone(self):
+        vocab = frozenset({"lap", "time"})
+        assert split_compounds(("brakebias",), vocab) == ("brakebias",)
 
 
 class TestExactTier:
