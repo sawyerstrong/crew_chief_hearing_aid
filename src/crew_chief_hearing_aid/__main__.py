@@ -424,9 +424,13 @@ def cmd_send_key(args) -> int:
         return 1
 
     print(f"Sent {normalize_key(key_spec)}.")
-    print("\nIf CrewChief captured it, the binding is done AND the runtime sink is")
-    print("proven — it is the same SendInput path. If the dialog is still waiting,")
-    print("CrewChief is not seeing injected scancodes; stop and fix that first.")
+    print("\nCheck the Assigned actions list. The row should have changed from")
+    print(f"  '{label} not assigned'")
+    print("to")
+    print(f"  '{label} assigned to Keyboard, button: NN'")
+    print("\nIf it did, the binding is done AND the runtime sink is proven — same")
+    print("SendInput path. If it still says 'not assigned', CrewChief is not")
+    print("seeing injected scancodes; stop and fix that before going further.")
     return 0
 
 
@@ -505,7 +509,12 @@ def cmd_bind_all(args) -> int:
         if n == 1:
             # The first one is the real test. If CrewChief did not capture it,
             # nothing downstream can work and 26 more will not help.
-            if not _ask("\n          Did CrewChief capture it?", default=False):
+            print("\n          Check the Assigned actions list in CrewChief.")
+            print("          The row should have changed from:")
+            print(f"            {intent.action} not assigned")
+            print("          to:")
+            print(f"            {intent.action} assigned to Keyboard, button: NN")
+            if not _ask("\n          Does it say 'assigned to Keyboard'?", default=False):
                 print("\nStop. CrewChief is not seeing injected scancodes, so the")
                 print("runtime sink cannot work either. Fix that before continuing.")
                 sink.close()
