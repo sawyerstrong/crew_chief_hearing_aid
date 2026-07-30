@@ -5,7 +5,9 @@ description = "Local voice control for CrewChief V4 — wake word, Whisper ASR, 
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
-    "tomli>=2.0; python_version<'3.11'",
+    # Round-trips the user config on write. A plain dict-dump would strip every
+    # explanatory comment the first time setup touched the file.
+    "tomlkit>=0.13",
 ]
 
 [project.optional-dependencies]
