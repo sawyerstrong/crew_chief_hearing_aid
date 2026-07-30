@@ -11,7 +11,14 @@ from __future__ import annotations
 
 import pytest
 
-from crew_chief_hearing_aid.dotenv import describe_source, find_dotenv, load, parse
+from crew_chief_hearing_aid.dotenv import (
+    describe_source,
+    find_dotenv,
+    load,
+    looks_like_anthropic_key,
+    parse,
+    set_value,
+)
 
 
 class TestParse:
@@ -104,6 +111,91 @@ class TestDescribeSource:
         assert secret not in described
         # Not even a suffix: for a project-scoped key the tail is the secret.
         assert secret[-6:] not in described
+
+
+class TestSetValue:
+    @pytest.fixture
+    def env_file(self, tmp_path):
+        p = tmp_path / ".env"
+        p.write_text(
+            "# a comment\nOTHER=keepme\nANTHROPIC_API_KEY=\n", encoding="utf-8"
+        )
+        return p
+
+    def test_replaces_in_place(self, env_file, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        set_value("ANTHROPIC_API_KEY", "sk-ant-newvalue", env_file)
+        assert parse(env_file.read_text(encoding="utf-8")) == {
+            "OTHER": "keepme",
+            "ANTHROPIC_API_KEY": "sk-ant-newvalue",
+        }
+
+    def test_preserves_comments_and_other_keys(self, env_file, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        set_value("ANTHROPIC_API_KEY", "sk-ant-x", env_file)
+        text = env_file.read_text(encoding="utf-8")
+        assert "# a comment" in text
+        assert "OTHER=keepme" in text
+
+    def test_appends_when_absent(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        p = tmp_path / ".env"
+        p.write_text("OTHER=x\n", encoding="utf-8")
+        set_value("ANTHROPIC_API_KEY", "sk-ant-y", p)
+        assert parse(p.read_text(encoding="utf-8"))["ANTHROPIC_API_KEY"] == "sk-ant-y"
+
+    def test_does_not_duplicate_on_repeat(self, env_file, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        set_value("ANTHROPIC_API_KEY", "sk-ant-1", env_file)
+        set_value("ANTHROPIC_API_KEY", "sk-ant-2", env_file)
+        occurrences = [
+            ln
+            for ln in env_file.read_text(encoding="utf-8").splitlines()
+            if ln.startswith("ANTHROPIC_API_KEY=")
+        ]
+        assert len(occurrences) == 1
+
+    def test_updates_the_live_environment(self, env_file, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        set_value("ANTHROPIC_API_KEY", "sk-ant-live", env_file)
+        import os
+
+        assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-live"
+
+    def test_never_logs_the_value(self, env_file, monkeypatch, caplog):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        secret = "sk-ant-do-not-log-this-value"
+        with caplog.at_level("DEBUG"):
+            set_value("ANTHROPIC_API_KEY", secret, env_file)
+        assert secret not in caplog.text
+        assert secret[-8:] not in caplog.text
+
+
+class TestKeyShapeCheck:
+    def test_accepts_a_plausible_key(self):
+        assert looks_like_anthropic_key("sk-ant-" + "x" * 30)
+
+    def test_rejects_other_shapes(self):
+        assert not looks_like_anthropic_key("sk-proj-abc123")
+        assert not looks_like_anthropic_key("")
+        assert not looks_like_anthropic_key("sk-ant-")  # too short
+
+    def test_returns_only_a_bool(self):
+        """Never a preview, prefix, or suffix — for a project-scoped key the
+        tail is as sensitive as the whole string."""
+        assert isinstance(looks_like_anthropic_key("sk-ant-" + "x" * 30), bool)
+
+
+class TestNoSecretsInArgv:
+    def test_there_is_no_api_key_flag(self):
+        """A secret passed as a CLI argument is recorded in shell history,
+        visible to `ps`, and captured by command logging. set-api-key prompts
+        via getpass instead."""
+        from crew_chief_hearing_aid.__main__ import build_parser
+
+        help_text = build_parser().format_help()
+        assert "--api-key" not in help_text
+        assert "set-api-key" in help_text
 
 
 class TestRepoHygiene:

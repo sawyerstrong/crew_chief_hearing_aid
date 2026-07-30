@@ -81,6 +81,58 @@ def load(path: Path | None = None, *, override: bool = False) -> list[str]:
     return applied
 
 
+def set_value(key: str, value: str, path: Path | None = None) -> Path:
+    """Write KEY=value into .env, preserving comments and other entries.
+
+    Creates the file from .env.example if absent. Never logs the value.
+    """
+    path = path or find_dotenv() or _default_env_path()
+    lines: list[str] = []
+    if path.is_file():
+        lines = path.read_text(encoding="utf-8").splitlines()
+    elif (example := path.parent / ".env.example").is_file():
+        lines = example.read_text(encoding="utf-8").splitlines()
+
+    rendered = f"{key}={value}"
+    replaced = False
+    for i, raw in enumerate(lines):
+        stripped = raw.strip()
+        if stripped.startswith("#") or "=" not in stripped:
+            continue
+        name = stripped.removeprefix("export ").split("=", 1)[0].strip()
+        if name == key:
+            lines[i] = rendered
+            replaced = True
+            break
+    if not replaced:
+        lines.append(rendered)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.environ[key] = value
+    log.info("wrote %s to %s", key, path.name)  # name only, never the value
+    return path
+
+
+def _default_env_path() -> Path:
+    """Repo root, alongside .env.example."""
+    here = Path(__file__).resolve().parent
+    for directory in (here, *here.parents):
+        if (directory / ".git").exists() or (directory / ".env.example").is_file():
+            return directory / ".env"
+    return here / ".env"
+
+
+def looks_like_anthropic_key(value: str) -> bool:
+    """Shape check only.
+
+    Deliberately returns a bool rather than any part of the value: for a
+    project-scoped key the suffix is as sensitive as the whole string, so even
+    a 'preview' is a leak.
+    """
+    return value.startswith("sk-ant-") and len(value) > 20
+
+
 def describe_source(key: str, path: Path | None = None) -> str:
     """Where a variable came from, for diagnostics. Never returns the value."""
     if key not in os.environ or not os.environ[key]:

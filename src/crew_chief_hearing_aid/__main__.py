@@ -215,7 +215,7 @@ def cmd_setup(args) -> int:
     from .audio import list_input_devices
     from .userconfig import UserConfigError, ensure_user_config, set_values
 
-    total = 5
+    total = 6
 
     # --- 1. user config -------------------------------------------------
     _step(1, total, "User config")
@@ -260,8 +260,17 @@ def cmd_setup(args) -> int:
         set_values(updates)
         print("  written")
 
-    # --- 4. bind the actions --------------------------------------------
-    _step(4, total, "Bind actions in CrewChief")
+    # --- 4. api key ------------------------------------------------------
+    _step(4, total, "Anthropic API key (optional)")
+    print("Tier 4 routes anything the local tiers reject to Claude Haiku 4.5.")
+    print("It buys multi-intent ('fuel and the gap ahead') and paraphrase")
+    print("headroom, at roughly $0.002 per command — but it is genuinely")
+    print("optional: without it the cascade stops at tier 3 and the local")
+    print("tiers handle the phrasings you actually use.")
+    _prompt_api_key()
+
+    # --- 5. bind the actions --------------------------------------------
+    _step(5, total, "Bind actions in CrewChief")
     config = _load(args)
     print("F13-F24 have no physical keys — that is why nothing else on the system")
     print("can ever emit them, and why CrewChief's Assign dialog cannot capture")
@@ -305,14 +314,72 @@ def cmd_setup(args) -> int:
         else:
             print("  Skipped — run `cchear bind-all` once CrewChief is open.")
 
-    # --- 5. check -------------------------------------------------------
-    _step(5, total, "Check")
+    # --- 6. check -------------------------------------------------------
+    _step(6, total, "Check")
     cmd_doctor(args)
 
     print("\nWhen doctor is clean:")
     print("  crew_chief_hearing_aid run --dry-run   # logs intents, sends no keys")
     print("  crew_chief_hearing_aid run")
     return 0
+
+
+def _prompt_api_key() -> bool:
+    """Prompt for the API key and write it to .env. True if one was stored.
+
+    Uses getpass so the key is never echoed to the terminal and never lands in
+    shell history. There is deliberately no --api-key flag for the same reason:
+    a secret passed as an argument is recorded by the shell, by `ps`, and by
+    any command logging in between.
+    """
+    import getpass
+
+    from .dotenv import describe_source, looks_like_anthropic_key, set_value
+
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        print(f"  ANTHROPIC_API_KEY {describe_source('ANTHROPIC_API_KEY')}")
+        if not _ask("  Replace it?", default=False):
+            return True
+
+    # getpass reads from the terminal device, not stdin, so a piped or
+    # redirected stdin never reaches it and the prompt blocks forever. Refuse
+    # rather than hang — a wedged setup script is worse than a skipped step.
+    if not sys.stdin.isatty():
+        print("  ! not an interactive terminal; cannot prompt for a secret.")
+        print("    Run `crew_chief_hearing_aid set-api-key` from a real terminal,")
+        print("    or put ANTHROPIC_API_KEY in .env yourself.")
+        return False
+
+    print("\n  Paste your Anthropic API key. It will not be shown as you type,")
+    print("  and it is written to .env, which is gitignored.")
+    print("  Leave blank to skip — tier 4 is optional; the cascade just stops")
+    print("  at tier 3 and everything else still works.\n")
+    try:
+        key = getpass.getpass("  API key: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\n  Skipped.")
+        return False
+
+    if not key:
+        print("  Skipped.")
+        return False
+
+    if not looks_like_anthropic_key(key):
+        # Shape only. Never print the value or any part of it.
+        print("  ! That does not look like an Anthropic key (expected sk-ant-...).")
+        if not _ask("  Store it anyway?", default=False):
+            print("  Not stored.")
+            return False
+
+    path = set_value("ANTHROPIC_API_KEY", key)
+    print(f"  Stored in {path}")
+    print("  If this key ever reaches a commit, screenshot, or chat log, rotate")
+    print("  it — deleting the artifact does not unpublish it.")
+    return True
+
+
+def cmd_set_api_key(args) -> int:
+    return 0 if _prompt_api_key() else 1
 
 
 def cmd_bindings(args) -> int:
@@ -749,6 +816,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     imp = sub.add_parser("import-phrases", help="preview phrases imported from CrewChief")
     imp.set_defaults(func=cmd_import_phrases)
+
+    # No --api-key flag on purpose: a secret passed as an argument is recorded
+    # in shell history, visible to `ps`, and captured by command logging.
+    apikey = sub.add_parser("set-api-key", help="store your Anthropic API key in .env")
+    apikey.set_defaults(func=cmd_set_api_key)
 
     match = sub.add_parser("match", help="test intent matching on one or more phrases")
     match.add_argument("phrase", nargs="+")
