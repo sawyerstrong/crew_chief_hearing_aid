@@ -209,6 +209,30 @@ Coverage is asymmetric in the **opposite** direction from containment, which is 
 - AC7.5 A keypress actually triggers the bound CrewChief action. ⬜ **needs hardware — the single highest-risk unknown**
 - AC7.6 A modifier-combo keypress triggers its bound action. ⬜ needs hardware
 
+### Operational constraints on binding (measured, not assumed)
+
+Three facts about CrewChief that shape how binding has to work. All confirmed
+against the live 4.19.4.0 install rather than inferred:
+
+1. **F13–F24 cannot be bound by pressing them.** No keyboard emits them — the
+   property that makes them collision-proof. So the binding key is *injected*
+   into CrewChief's waiting Assign dialog via the same `SendInput` path used at
+   runtime. This is a feature, not a workaround: a successful bind proves the
+   runtime sink.
+2. **CrewChief greys out Assign while a session is running.** It must be open
+   but stopped — the main button reading `Start`, not `Stop`. Bind first, then
+   start.
+3. **Bindings are not persisted to `user.config`.** A binding made in the UI,
+   with CrewChief then closed so it flushed (mtime confirmed to move), still
+   left every `*_button_index` at `-1` and every `*_device_type` empty. Where
+   they do live is unknown: `current_settings_profile` names a
+   `defaultSettings.json` that is not in the sound-pack directory, and the
+   install dir is not discoverable via Start Menu, ClickOnce cache, or the
+   uninstall registry.
+
+(3) is why binding is not automated by writing CrewChief's config directly, and
+why `doctor` cannot report what is bound — only CrewChief's own dialog can.
+
 ### C8 Full action coverage — **NOT BUILT** (G5)
 - AC8.1 All 27 usable actions appear in the shipped config with phrase sets.
 - AC8.2 A `bindings` CLI command prints the action→key sheet for manual entry into CrewChief.

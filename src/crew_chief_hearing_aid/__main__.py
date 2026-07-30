@@ -272,8 +272,9 @@ def cmd_setup(args) -> int:
             args.only = None
             print(f"\n  Binding all {len(config.intents)} actions.\n")
         args.delay = 3
-        print("Start CrewChief now if it is not already open.")
-        if _ask("CrewChief running?", default=True):
+        print("Open CrewChief now, but do NOT press Start — it greys out Assign")
+        print("while a session is running. The main button should read 'Start'.")
+        if _ask("CrewChief open and stopped?", default=True):
             if cmd_bind_all(args) != 0:
                 # bind-all stops on a failed first capture; nothing downstream
                 # can work until that is fixed, so do not pretend otherwise.
@@ -408,7 +409,9 @@ def cmd_send_key(args) -> int:
 
     print(f"Key    : {normalize_key(key_spec)}")
     print(f"Action : {label}")
-    print("\nIn CrewChief: select the action, click Assign, then leave it waiting.")
+    print("\nCrewChief must be OPEN but STOPPED — Assign is greyed out while a")
+    print("session is running (the main button should read 'Start').")
+    print("Then: select the action, click Assign, and leave the dialog waiting.")
     for remaining in range(args.delay, 0, -1):
         print(f"  sending in {remaining}... ", end="\r", flush=True)
         time.sleep(1)
@@ -466,7 +469,10 @@ def cmd_bind_all(args) -> int:
         return 1
 
     print(f"Binding {len(intents)} actions.\n")
-    print("For each one, in CrewChief:")
+    print("CrewChief must be OPEN but STOPPED — it greys out Assign while a")
+    print("session is running. The main button should read 'Start', not 'Stop'.")
+    print("Bind everything first, then Start it.\n")
+    print("For each action, in CrewChief:")
     print("  Add/Remove Actions -> add the action -> select it -> click Assign")
     print("Then press Enter here and the key is injected into the waiting dialog.\n")
     print("Enter = send, s = skip, q = stop.\n")

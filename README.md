@@ -40,6 +40,8 @@ F13–F24 have no physical keys. That is exactly why nothing else on your system
 
 So setup **injects** each key while CrewChief's Assign dialog is waiting, through the same `SendInput` path used at runtime. A successful bind therefore also proves the runtime sink reaches CrewChief. It checks after the first action and stops if the key was not captured — if injected scancodes do not arrive, nothing downstream can work and binding 26 more will not help.
 
+> **CrewChief must be open but *stopped* while binding.** It greys out **Assign** whenever a session is running — the main button has to read `Start`, not `Stop`. Bind everything first, then start it.
+
 Setup offers the **core 12** (plain F13–F24, the race-critical ones) as a first pass; the remaining toggles and rally features can be added later with:
 
 ```bash
