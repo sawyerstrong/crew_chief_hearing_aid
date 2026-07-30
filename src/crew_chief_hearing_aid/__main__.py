@@ -129,13 +129,20 @@ def cmd_doctor(args) -> int:
             problems += 1
 
     print("\n== Tier 4 (LLM) ==")
+    from .dotenv import describe_source, find_dotenv
+
     if not config.get("llm", "enabled", True):
         print("  disabled in config; tiers 1-3 only")
     elif os.environ.get("ANTHROPIC_API_KEY"):
-        # Presence only. Never the value, never a prefix — see AC6.7.
-        print(f"  ANTHROPIC_API_KEY set; model {config.get('llm', 'model')}")
+        # Presence and provenance only. Never the value, never a prefix — the
+        # suffix of a project-scoped key is as sensitive as the whole thing.
+        print(f"  ANTHROPIC_API_KEY {describe_source('ANTHROPIC_API_KEY')}")
+        print(f"  model {config.get('llm', 'model')}")
     else:
+        env_file = find_dotenv()
+        where = f"{env_file}" if env_file else "a .env file (copy .env.example)"
         print("  ANTHROPIC_API_KEY not set — cascade will stop at tier 3")
+        print(f"  set it in the environment or {where}")
 
     print("\n== Compute placement ==")
     # The zero-VRAM property is load-bearing (the GPU is rendering VR), so it
@@ -760,6 +767,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     setup_logging(args.log_level)
+    # Before anything reads ANTHROPIC_API_KEY. A real environment variable
+    # takes precedence, so this never shadows an explicitly exported key.
+    from .dotenv import load
+
+    load()
     if args.config:
         from pathlib import Path
 

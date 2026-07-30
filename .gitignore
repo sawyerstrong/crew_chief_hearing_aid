@@ -1,3 +1,8 @@
+# Secrets. .env holds ANTHROPIC_API_KEY; only the example template is tracked.
+.env
+.env.*
+!.env.example
+
 # Local machine config — device names, key bindings, model paths.
 # Never commit; ships as config.default.toml instead.
 config.toml
