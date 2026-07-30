@@ -206,8 +206,8 @@ Coverage is asymmetric in the **opposite** direction from containment, which is 
 - AC7.2 Hold ≥120ms — CrewChief polls at `hold_button_poll_frequency` (100ms), so shorter holds fall between polls. ✅ implemented
 - AC7.3 Modifier combos parse and normalise so `shift+ctrl+F13` and `ctrl+shift+F13` collide in the duplicate-key check. ✅ implemented, ⬜ untested
 - AC7.4 Two intents on one key is fatal at config load. ✅ tested
-- AC7.5 A keypress actually triggers the bound CrewChief action. ⬜ **needs hardware — the single highest-risk unknown**
-- AC7.6 A modifier-combo keypress triggers its bound action. ⬜ needs hardware
+- AC7.5 An injected keypress reaches CrewChief. ✅ **verified on hardware** — a numpad key injected into the Assign dialog was captured and bound. Same `SendInput` path as runtime, so the sink is proven.
+- ~~AC7.6 Modifier combos~~ — **removed**. CrewChief has no modifier field; preflight now rejects them.
 
 ### Operational constraints on binding (measured, not assumed)
 
@@ -351,11 +351,11 @@ Hit rate is reported as **cold, first-attempt** — not after repeating yourself
 
 | | Why it matters |
 |---|---|
-| AC7.5 — a keypress actually triggers its CrewChief action | **Highest-risk unknown.** Everything downstream assumes it. |
-| AC7.6 — modifier combos trigger | 15 of 27 actions depend on Ctrl/Shift |
-| AC3.1–3.5 — wheel button capture and release timing | No wheel in this environment |
+| ~~AC7.5~~ | ✅ **Resolved** — injected keypress captured and bound by CrewChief |
+| AC3.1–3.5 — wheel button capture and release timing | Enumeration works (R3 wheel, 128 buttons); button-down never exercised |
 | AC4.1 — Whisper ≤300ms on CPU | Estimated, not measured |
 | §5.3 tier-4 latency | Estimated at 600ms–1s; measure 20 calls before trusting it |
+| End-to-end run | The pipeline has never executed against live audio |
 
 The first bench session should run in this order: `setup-ptt` → bind keys from `bindings` → `doctor` → `run --dry-run` → **one real keypress to settle AC7.5** → one modifier combo for AC7.6.
 
