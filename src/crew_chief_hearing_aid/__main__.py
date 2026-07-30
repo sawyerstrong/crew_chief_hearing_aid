@@ -104,9 +104,31 @@ def cmd_doctor(args) -> int:
 
         device = resolve_input_device(config.get("audio", "input_device"))
         print(f"  resolved: {device}")
+    except ImportError as exc:
+        print(f"  ! {exc}")
+        print('    install runtime deps:  pip install -e ".[runtime]"')
+        problems += 1
     except Exception as exc:  # noqa: BLE001 - doctor reports, never raises
         print(f"  ! {exc}")
         problems += 1
+
+    print("\n== Runtime dependencies ==")
+    for module, why, required in [
+        ("sounddevice", "audio capture", True),
+        ("faster_whisper", "transcription", True),
+        ("pygame", "wheel push-to-talk", True),
+        ("model2vec", "tier-3 embeddings (falls back to hashing)", False),
+        ("anthropic", "tier-4 routing", config.get("llm", "enabled", True)),
+    ]:
+        try:
+            __import__(module)
+            print(f"  {module}: ok")
+        except ImportError:
+            if required:
+                print(f"  ! {module} missing — needed for {why}")
+                problems += 1
+            else:
+                print(f"  {module} missing — optional ({why})")
 
     print("\n== Trigger ==")
     ptt_cfg = config.section("ptt")
@@ -153,18 +175,39 @@ def cmd_doctor(args) -> int:
     else:
         print(f"  ! whisper is on {asr_device!r} — this allocates VRAM and contends with VR")
         problems += 1
+    # onnxruntime backs VAD and the wake word only. Under PTT (D2) both are
+    # disabled, so a missing install is not a problem — reporting it as one is
+    # the same noise as the old bound/unbound line.
+    needs_onnx = config.get("vad", "enabled", False) or config.get(
+        "wakeword", "enabled", False
+    )
+    # Only GPU providers matter. AzureExecutionProvider is remote inference and
+    # allocates no VRAM; treating any non-CPU provider as a GPU was a false
+    # positive on a stock onnxruntime install.
+    GPU_PROVIDERS = {
+        "CUDAExecutionProvider",
+        "DmlExecutionProvider",
+        "TensorrtExecutionProvider",
+        "ROCMExecutionProvider",
+        "MIGraphXExecutionProvider",
+        "OpenVINOExecutionProvider",
+    }
     try:
         import onnxruntime as ort
 
         providers = ort.get_available_providers()
-        if providers == ["CPUExecutionProvider"]:
-            print("  onnxruntime: CPU-only build (VAD + wake word)")
+        gpu = sorted(GPU_PROVIDERS.intersection(providers))
+        if not gpu:
+            print("  onnxruntime: no GPU providers available")
         else:
-            print(f"  ! onnxruntime exposes {providers}; expect VRAM use unless the GPU is hidden")
+            print(f"  ! onnxruntime exposes {gpu}; expect VRAM use unless the GPU is hidden")
             problems += 1
     except ImportError:
-        print("  ! onnxruntime not installed — VAD and wake word unavailable")
-        problems += 1
+        if needs_onnx:
+            print("  ! onnxruntime not installed, but VAD or wake word is enabled")
+            problems += 1
+        else:
+            print("  onnxruntime not installed — not needed (VAD and wake word off)")
 
     print("\n== Output sink ==")
     try:
