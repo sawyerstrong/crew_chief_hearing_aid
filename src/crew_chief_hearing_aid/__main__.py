@@ -41,7 +41,9 @@ def cmd_init_config(args) -> int:
         return 1
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(default_config_path(), target)
-    print(f"Wrote {target}\nEdit audio.input_device and the [[intents]] keys, then run: crew_chief_hearing_aid doctor")
+    print(f"Wrote {target}")
+    print("Edit audio.input_device and the [[intents]] keys, then run:")
+    print("  crew_chief_hearing_aid doctor")
     return 0
 
 
@@ -56,7 +58,10 @@ def cmd_doctor(args) -> int:
         print(f"  loaded {path}")
     print(f"  {len(config.intents)} intents defined")
     if len(config.source_paths) == 1:
-        print("  ! no user config; run `crew_chief_hearing_aid init-config` (defaults assume this rig's mic)")
+        print(
+            "  ! no user config; run `crew_chief_hearing_aid init-config` "
+            "(defaults assume this rig's mic)"
+        )
 
     print("\n== CrewChief ==")
     user_config = crewchief.find_user_config()
@@ -82,6 +87,28 @@ def cmd_doctor(args) -> int:
         print(f"  resolved: {device}")
     except Exception as exc:  # noqa: BLE001 - doctor reports, never raises
         print(f"  ! {exc}")
+        problems += 1
+
+    print("\n== Compute placement ==")
+    # The zero-VRAM property is load-bearing (the GPU is rendering VR), so it
+    # gets checked rather than assumed.
+    asr_device = config.get("asr", "device", "cpu")
+    if asr_device == "cpu":
+        print(f"  whisper: cpu / {config.get('asr', 'compute_type', 'int8')}")
+    else:
+        print(f"  ! whisper is on {asr_device!r} — this allocates VRAM and contends with VR")
+        problems += 1
+    try:
+        import onnxruntime as ort
+
+        providers = ort.get_available_providers()
+        if providers == ["CPUExecutionProvider"]:
+            print("  onnxruntime: CPU-only build (VAD + wake word)")
+        else:
+            print(f"  ! onnxruntime exposes {providers}; expect VRAM use unless the GPU is hidden")
+            problems += 1
+    except ImportError:
+        print("  ! onnxruntime not installed — VAD and wake word unavailable")
         problems += 1
 
     print("\n== Output sink ==")
@@ -169,7 +196,8 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--force", action="store_true")
     init.set_defaults(func=cmd_init_config)
 
-    sub.add_parser("doctor", help="check install, bindings and config").set_defaults(func=cmd_doctor)
+    doctor = sub.add_parser("doctor", help="check install, bindings and config")
+    doctor.set_defaults(func=cmd_doctor)
 
     match = sub.add_parser("match", help="test intent matching on one or more phrases")
     match.add_argument("phrase", nargs="+")

@@ -48,6 +48,18 @@ class WhisperTranscriber:
         self.cpu_threads = cpu_threads
         self._model = None
 
+        if device != "cpu":
+            # Not forbidden -- it's your GPU -- but the whole VR rationale rests
+            # on this staying "cpu", so it must not change silently. tiny.en is
+            # 39M params (~78MB fp16), while a CUDA context plus cuBLAS/cuDNN
+            # kernels typically costs 300-600MB: the overhead dwarfs the model,
+            # and the SM time comes out of the renderer's frame budget.
+            log.warning(
+                "asr.device is %r, not 'cpu'. This allocates VRAM and contends with "
+                "the sim for SM time; expect frame drops in VR.",
+                device,
+            )
+
     def _load(self):
         if self._model is None:
             from faster_whisper import WhisperModel

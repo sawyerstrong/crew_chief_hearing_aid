@@ -24,7 +24,10 @@ class InputDevice:
 
     def __str__(self) -> str:
         marker = " (system default)" if self.is_default else ""
-        return f"[{self.index}] {self.name} — {self.channels}ch @ {self.default_samplerate:.0f}Hz{marker}"
+        return (
+            f"[{self.index}] {self.name} — "
+            f"{self.channels}ch @ {self.default_samplerate:.0f}Hz{marker}"
+        )
 
 
 class DeviceResolutionError(RuntimeError):

@@ -12,6 +12,7 @@ custom models in wakeword_custom/ (gitignored).
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 import numpy as np
@@ -36,6 +37,27 @@ class WakeWordDetector:
 
     def _load(self):
         if self._model is None:
+            import onnxruntime as ort
+
+            # openWakeWord's Model() exposes no provider argument, and
+            # onnxruntime prefers CUDA whenever a GPU build is installed. The
+            # only lever that actually works from here is hiding the GPU from
+            # CUDA before the session is created -- nothing else in this
+            # process uses CUDA, so the scope is safe.
+            #
+            # This must happen before `openwakeword.model` is imported: ORT
+            # enumerates devices at session construction, and the import chain
+            # can construct one eagerly.
+            available = ort.get_available_providers()
+            if available != ["CPUExecutionProvider"]:
+                log.warning(
+                    "onnxruntime exposes %s; hiding the GPU so the wake word stays "
+                    "on CPU. Install the CPU-only 'onnxruntime' wheel, not "
+                    "'onnxruntime-gpu'.",
+                    available,
+                )
+                os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
             from openwakeword.model import Model
 
             self._model = Model(

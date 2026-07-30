@@ -30,7 +30,7 @@ P2 is the one that motivates the project. P1 and P3 have zero-code mitigations i
 ## 2. Goals
 
 - **G1** Voice control of CrewChief more accurate than its native SRE, measured, not asserted.
-- **G2** Consume zero wheel buttons.
+- **G2** Consume **no wheel buttons for commands**. One button for push-to-talk is an accepted spend (D9) — the constraint was never "zero buttons", it was "don't burn 27 of them".
 - **G3** Require no modification to CrewChief; survive its auto-updates.
 - **G4** Portable: clone from GitHub, one-shot install, run on a different machine.
 - **G5** Reach **every** CrewChief action exposed in Add/Remove Actions.
@@ -49,6 +49,8 @@ P2 is the one that motivates the project. P1 and P3 have zero-code mitigations i
 |---|---|---|
 | D1 | Output is **synthetic keypress only**. No CrewChief fork in v1. | Keeps the auto-updater and avoids owning a C# fork across CrewChief's release cadence (4.19.1 → 4.19.4 already observed on this machine). |
 | D2 | Trigger is **wake word and push-to-talk, both configurable**. | Wake word satisfies G2. PTT gives a low-false-positive baseline to measure the wake word against. |
+| **D9** | **PTT is a wheel button, captured during setup.** Resolves O3. | A keyboard key is unreachable by touch in a headset. Setup prompts "press the button you want", captures device GUID + button index, and persists — the same flow CrewChief uses. Requires DirectInput/joystick polling, not a keyboard hook. |
+| **D10** | **Phrases are imported from CrewChief's SRE config; descriptions are hand-authored metadata.** Resolves O6. | CrewChief's `speech_recognition_config.txt` already carries good phrasings, and the subset-dropping parser is built and tested. But it has no tool *descriptions*, which the Haiku stage needs — and no mapping from SRE key to bindable action. That mapping plus descriptions is the hand-authored layer. |
 | D3 | Intent routing includes an **LLM tool-calling stage**. | Multi-intent handling and paraphrase headroom; the project is explicitly partly for its own sake. |
 | D4 | Done means **works in a live race**, measured from the utterance log. | Bench testing does not exercise cockpit noise, VR load, or Discord bleed. |
 | D5 | Keys are **F13–F24, with Ctrl/Shift/Alt modifiers**. | No physical keyboard emits F13–F24, so collision is impossible. 27 actions need more than 12 keys; modifiers give 48 slots. |
@@ -155,10 +157,13 @@ Tier 2 is symmetric (F1 over content-token sets), **not** containment. Containme
 - AC2.2 **≤1 false positive per hour** with Discord voice and sim audio active. ⬜ needs hardware
 - AC2.3 Custom-trained models live in `wakeword_custom/`, gitignored, never required (G4).
 
-### C3 Push-to-talk — **NOT BUILT** (D2)
-- AC3.1 A configurable key held down opens capture; release endpoints immediately, bypassing VAD.
-- AC3.2 Works while an iRacing window has focus — needs a low-level keyboard hook, not polling.
-- AC3.3 PTT and wake word coexist; either can fire, neither double-fires.
+### C3 Push-to-talk on a wheel button — **NOT BUILT** (D2, D9)
+- AC3.1 A setup command prompts "press the button you want for push-to-talk", captures the first button-down event, and persists device GUID + button index to the user config. Never a bare index — GUIDs survive re-enumeration where indices don't (same reasoning as D6).
+- AC3.2 Holding the button opens capture; **releasing it endpoints immediately, bypassing VAD entirely.**
+- AC3.3 Works while iRacing has focus. DirectInput polling, not a keyboard hook — the wheel is a joystick device.
+- AC3.4 PTT and wake word coexist; either can fire, neither double-fires while the other is active.
+- AC3.5 Wheel disconnected or button unresolvable at startup → loud failure, fall back to wake-word-only, never a silent no-op.
+- AC3.6 Setup refuses to bind a button CrewChief already claims (its own PTT is on Keyboard button 91; a wheel button collision would double-trigger).
 
 ### C4 Transcription — **built, unverified**
 - AC4.1 2s utterance transcribes in ≤300ms on CPU. ⬜ needs hardware
@@ -190,9 +195,30 @@ Tier 2 is symmetric (F1 over content-token sets), **not** containment. Containme
 - AC7.6 A modifier-combo keypress triggers its bound action. ⬜ needs hardware
 
 ### C8 Full action coverage — **NOT BUILT** (G5)
-- AC8.1 All 27 usable actions appear in `config.default.toml` with phrase sets.
+- AC8.1 All 27 usable actions appear in the shipped config with phrase sets.
 - AC8.2 A `bindings` CLI command prints the action→key sheet for manual entry into CrewChief.
 - AC8.3 `doctor` reports which configured intents have no CrewChief binding yet.
+
+### C11 Action metadata registry — **NOT BUILT** (D10)
+
+The join between three things that live in different places: CrewChief's bindable action labels, its SRE phrase config, and the tool descriptions Haiku needs. Only the metadata is hand-authored; phrases come from import.
+
+```toml
+[[actions]]
+id          = "car_ahead_last_lap"
+crewchief   = "What's the car ahead's last lap time"   # Add/Remove Actions label
+sre_key     = "WHATS_THE_CAR_AHEADS_LAST_LAP_TIME"     # key in speech_recognition_config.txt
+description = "Report the last lap time set by the car directly ahead on track."
+key         = "F13"
+phrases     = []   # empty = import from sre_key; non-empty = override
+```
+
+- AC11.1 Every action carries a `description` written for a tool-calling model — states *when to call it*, not just what it does. Prescriptive descriptions measurably improve triggering.
+- AC11.2 `phrases` empty → import from `sre_key` via the subset-dropping parser (drops the greedy short aliases that cause P3). Non-empty → use verbatim.
+- AC11.3 An `sre_key` absent from the installed CrewChief config fails at load with the key name — not a silent empty phrase set.
+- AC11.4 Actions with no natural `sre_key` (the two lap-time ones have no SRE entry) require hand-written `phrases`; loading with both empty is fatal.
+- AC11.5 An `import-phrases` command previews what would be imported per action, so the mapping is verifiable before it ships.
+- AC11.6 The `sre_key` → action mapping is asserted in CI against a committed fixture, so a CrewChief update that renames a key fails a test rather than a race.
 
 ### C9 Installer — **built, unverified**
 - AC9.1 `install.ps1` is idempotent and re-runnable. ⬜ needs a clean machine
@@ -219,6 +245,10 @@ Tier 2 is symmetric (F1 over content-token sets), **not** containment. Containme
 | F8 | Modifier combo collides with a sim or Windows binding | F13–F24 base keys are unreachable by physical keyboards | AC7.3 |
 | F9 | Wrong mic after replug | Name resolution, fail loudly | AC1.1 |
 | F10 | Model download fails on the rig | HashingEmbedder fallback, checksummed atomic download | Implemented |
+| F11 | **Wheel disconnects or re-enumerates; PTT silently dead** | Bind by device GUID not index; loud startup failure; degrade to wake-word-only | AC3.1, AC3.5 |
+| F12 | **PTT button collides with a sim or CrewChief binding** | Setup refuses a claimed button | AC3.6 |
+| F13 | **CrewChief update renames an SRE key; phrases import empty** | Load fails naming the key; CI asserts the mapping against a fixture | AC11.3, AC11.6 |
+| F14 | **Silent VRAM use** — `asr.device` changed, or `onnxruntime-gpu` installed | `doctor` compute-placement check; warning at transcriber construction; GPU hidden before wake-word session creation | Implemented |
 
 ## 9. Validation plan (D4)
 
@@ -232,12 +262,10 @@ Hit rate is reported as **cold, first-attempt** — not after repeating yourself
 
 ## 10. Open decisions
 
-- **O3 — PTT key.** Which key, and is it reachable by touch in a headset? (Note: CrewChief's own PTT is already on Keyboard button 91 — avoid collision.)
 - **O4 — Wake word.** Ship a pretrained model (portable, G4) or train on your own voice (more accurate, not portable)?
-- **O5 — VAD silence timeout.** 900ms is the default and dominates the latency budget. 600ms is worth trying but risks clipping slow speech. Needs a measured call, not a guess.
-- **O6 — Phrase authorship for 27 actions.** Hand-write phrase sets, or import and prune CrewChief's own `speech_recognition_config.txt` through the subset-dropping parser already built?
+- **O5 — VAD silence timeout.** Still open, but **D9 largely defuses it**: with a wheel PTT, button release is the endpoint and VAD never runs on that path. The 900ms timeout now only applies to wake-word-triggered utterances. Rather than guess, C4 should log the measured gap between last-speech and timeout on every VAD-ended utterance; pick the value from a session's data. Decide after the first bench run, not now.
 
-*Resolved since the last revision: O1 → D8 (cascade). O2 → D7 (Haiku 4.5 API, not Ollama).*
+*Resolved since the last revision: O1 → D8 (cascade). O2 → D7 (Haiku 4.5 API). O3 → D9 (wheel-button PTT, captured at setup). O6 → D10 (import phrases, hand-author metadata).*
 
 ## 11. Delta from what is on disk
 
@@ -246,12 +274,18 @@ Hit rate is reported as **cold, first-attempt** — not after repeating yourself
 | Component | State | Action |
 |---|---|---|
 | C1, C4, C5, C7, C10 | Built, tested | Keep |
+| Compute-placement guards (F14) | Built | Keep |
 | C9 installer | Built | Verify on a clean machine |
 | C7 modifier support | Built | Add unit tests (AC7.3) |
-| C3 push-to-talk | Not built | **Build** (D2) |
+| C3 wheel PTT | Not built | **Build** (D9) — needs a joystick backend; `pygame` or `inputs` |
 | C6 Haiku tier | Not built | **Build** (D3/D7/D8) |
-| C8 full action coverage | 12 of 27 intents | **Expand**, add `bindings` command |
+| C11 action metadata | Not built | **Build first** — C6 and C8 both depend on it |
+| C8 full action coverage | 12 of 27 intents | **Expand** via C11, add `bindings` command |
 | `NamedPipeSink` | Built | Unsupported under D1; keep for the phase-2 fork |
-| `config.default.toml` | 12 intents | Add PTT, LLM, and the remaining 15 actions |
+| `config.default.toml` | 12 intents | Restructure to the C11 `[[actions]]` shape; add PTT and LLM sections |
+
+**Build order.** C11 first — the metadata registry is what C6's tool definitions and C8's phrase sets are both generated from, so building either before it means writing them twice. Then C6 (Haiku tier) since it is testable offline with a stub, then C3 (wheel PTT) which is the only piece that cannot be verified without you at the rig.
+
+**New dependency.** C3 needs a joystick backend for DirectInput. `pygame` is heavier but reliable on Windows wheels; `inputs` is lighter but flakier. Neither is currently in `pyproject.toml`.
 
 Nothing already written needs deleting. The new components attach at existing seams: PTT alongside the wake-word check in the pipeline's IDLE state, and Haiku as tier 4 behind the same `MatchResult` contract the other three tiers already return.
