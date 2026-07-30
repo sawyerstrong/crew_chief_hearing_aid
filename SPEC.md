@@ -48,7 +48,7 @@ P2 is the one that motivates the project. P1 and P3 have zero-code mitigations i
 | ID | Decision | Rationale |
 |---|---|---|
 | D1 | Output is **synthetic keypress only**. No CrewChief fork in v1. | Keeps the auto-updater and avoids owning a C# fork across CrewChief's release cadence (4.19.1 → 4.19.4 already observed on this machine). |
-| D2 | Trigger is **wake word and push-to-talk, both configurable**. | Wake word satisfies G2. PTT gives a low-false-positive baseline to measure the wake word against. |
+| D2 | Trigger is **push-to-talk only**. Wake word deferred out of v1. | Removes the entire false-positive surface (Discord bleed, sim audio) and — see §5.3 — makes the pipeline *faster than the thing it replaces*, because PTT release endpoints directly and the 900ms VAD timeout disappears. The wake-word code stays in the tree, disabled. |
 | **D9** | **PTT is a wheel button, captured during setup.** Resolves O3. | A keyboard key is unreachable by touch in a headset. Setup prompts "press the button you want", captures device GUID + button index, and persists — the same flow CrewChief uses. Requires DirectInput/joystick polling, not a keyboard hook. |
 | **D10** | **Phrases are imported from CrewChief's SRE config; descriptions are hand-authored metadata.** Resolves O6. | CrewChief's `speech_recognition_config.txt` already carries good phrasings, and the subset-dropping parser is built and tested. But it has no tool *descriptions*, which the Haiku stage needs — and no mapping from SRE key to bindable action. That mapping plus descriptions is the hand-authored layer. |
 | D3 | Intent routing includes an **LLM tool-calling stage**. | Multi-intent handling and paraphrase headroom; the project is explicitly partly for its own sake. |
@@ -90,18 +90,22 @@ Argument extraction returns only with the fork. This is a real halving of what t
 
 ### 5.3 Latency budget
 
+Recomputed after D2 dropped the wake word. **PTT release is the endpoint, so the 900ms VAD timeout leaves the critical path entirely** — VAD is no longer needed for endpointing at all.
+
 | Stage | Budget | Notes |
 |---|---|---|
-| Wake word / PTT → capture start | ~0ms | Pre-roll ring buffer covers it |
-| **VAD endpointing** | **900ms** | Trailing silence timeout. **The single largest lever — larger than the entire model choice.** Tunable. |
+| PTT press → capture start | ~0ms | Ring buffer already running |
+| PTT release → endpoint | **~0ms** | Button release *is* the endpoint. Was 900ms of VAD silence-timeout. |
 | Whisper tiny.en (CPU int8) | ~150ms | For a 2s utterance |
-| Tiers 1–3 (exact / token / embedding) | ~5ms | Local, always runs |
+| Tiers 1–3 (exact / coverage / embedding) | ~5ms | Local, always runs |
 | Tier 4 (Haiku 4.5) | ~600ms–1s *estimated* | Only on cascade miss. **Unverified — must be measured on this connection.** |
 | CrewChief response | ~1s | Outside our control |
-| **Total, happy path** | **~2.1s** | Tiers 1–3 hit |
-| **Total, cascade to Haiku** | **~2.7–3.1s** | |
+| **Total, happy path** | **~1.2s** | Tiers 1–3 hit |
+| **Total, cascade to Haiku** | **~1.8–2.2s** | |
 
-For comparison, CrewChief's native SRE path is roughly 1.3s. The happy path is within ~800ms of that and buys a real reject; the cascade path is the price of paraphrase freedom, paid only when the local tiers fail.
+CrewChief's native SRE path is roughly 1.3s. **The happy path is now faster than the thing it replaces**, while also buying a real reject — that inverts the earlier trade, where the project cost ~800ms for correctness. The cascade path costs ~0.5–0.9s over native and is paid only when the local tiers fail.
+
+This is the single largest design improvement in the spec so far, and it came from *removing* a component rather than adding one.
 
 ### 5.4 Cost and API mechanics (D7)
 
@@ -152,10 +156,9 @@ Tier 2 is symmetric (F1 over content-token sets), **not** containment. Containme
 - AC1.2 Empty device name logs a warning and falls back to system default, never silently. ✅ tested
 - AC1.3 Pre-roll ring buffer retains ≥512ms so a command run into the wake word is not clipped. ⬜ needs hardware
 
-### C2 Wake word — **built, unverified**
-- AC2.1 Fires on the configured word; cooldown prevents one utterance retriggering. ⬜ needs hardware
-- AC2.2 **≤1 false positive per hour** with Discord voice and sim audio active. ⬜ needs hardware
-- AC2.3 Custom-trained models live in `wakeword_custom/`, gitignored, never required (G4).
+### C2 Wake word — **built, OUT OF SCOPE for v1** (D2)
+
+Code stays in the tree behind `wakeword.enabled = false`. Not on the v1 critical path, not validated, not a release blocker. Revisit only if PTT proves annoying in practice.
 
 ### C3 Push-to-talk on a wheel button — **NOT BUILT** (D2, D9)
 - AC3.1 A setup command prompts "press the button you want for push-to-talk", captures the first button-down event, and persists device GUID + button index to the user config. Never a bare index — GUIDs survive re-enumeration where indices don't (same reasoning as D6).
@@ -171,11 +174,23 @@ Tier 2 is symmetric (F1 over content-token sets), **not** containment. Containme
 - AC4.3 Empty/silent audio yields empty transcript and a logged reject, not a crash. ✅ tested
 
 ### C5 Intent matcher, tiers 1–3 — **built**
+
+Tier 2 scores **IDF-weighted query coverage** — how much of what the user *said* is explained by the phrase — not symmetric F1. The rewrite came from a failing case: `car ahead laptime` scored 0.518 and ranked `car_behind_last_lap` as runner-up. Symmetric F1 structurally caps a 3-token query against a 7-token phrase near 0.6, so tier 2 could never fire on terse input.
+
+Coverage is asymmetric in the **opposite** direction from containment, which is what lets it separate two cases that look alike:
+
+- P3 (reject): long utterance, short registered alias tries to claim it → the discriminative tokens go unexplained → low score.
+- Terse input (accept): short utterance, long registered phrase → every query token explained → 1.0.
+
 - AC5.1 Exact match ignores case, punctuation, apostrophes, filler words. ✅ tested
 - AC5.2 A phrase sharing no token with any intent rejects cleanly. ✅ tested (was a crash; regression test added)
 - AC5.3 Top-two within `margin` rejects as ambiguous even at high score. ✅ tested
-- AC5.4 Containment never scores 1.0 for a short phrase inside a long one. ✅ tested
+- AC5.4 A short alias never claims a long utterance that is mostly about something else. ✅ tested
 - AC5.5 Every reject records the best candidate and score for tuning. ✅ tested
+- AC5.6 Possessives fold onto their stem (`ahead's` → `ahead`) — without this the most discriminative token in the ahead/behind pair never matches. ✅ tested
+- AC5.7 Run-together compounds split against the corpus vocabulary (`laptime` → `lap time`), with no hardcoded compound list. ✅ tested
+- AC5.8 Terse phrasing resolves at **tier 2**, not by falling through to the embedder. ✅ tested — asserts `method == "token"` so a regression to the slow path fails CI.
+- AC5.9 A query of only low-information words is rejected on absolute evidence, not just coverage ratio. ✅ tested against the real corpus (IDF is corpus-relative, so a toy fixture cannot exercise this).
 
 ### C6 Haiku 4.5 tier — **NOT BUILT** (D3, D7, D8)
 - AC6.1 `tool_choice={"type": "any"}` — an invalid tool name is unrepresentable, not merely unlikely.
@@ -235,7 +250,7 @@ phrases     = []   # empty = import from sre_key; non-empty = override
 
 | ID | Failure | Mitigation | Artifact |
 |---|---|---|---|
-| F1 | Wake word fires on Discord/sim audio | VAD gate, cooldown, tier rejection | AC2.2 measurement |
+| ~~F1~~ | ~~Wake word fires on Discord/sim audio~~ | **Eliminated by D2** — no always-on listening in v1 | — |
 | F2 | Whisper mis-transcribes | Classification not transcription; tiers tolerate word errors | Eval fixture |
 | F3 | Matcher fires wrong intent | Ambiguity margin + threshold | AC5.3, AC5.4 |
 | F4 | LLM emits an invalid tool name | `tool_choice: any` makes it unrepresentable | AC6.1 |
@@ -262,30 +277,41 @@ Hit rate is reported as **cold, first-attempt** — not after repeating yourself
 
 ## 10. Open decisions
 
-- **O4 — Wake word.** Ship a pretrained model (portable, G4) or train on your own voice (more accurate, not portable)?
-- **O5 — VAD silence timeout.** Still open, but **D9 largely defuses it**: with a wheel PTT, button release is the endpoint and VAD never runs on that path. The 900ms timeout now only applies to wake-word-triggered utterances. Rather than guess, C4 should log the measured gap between last-speech and timeout on every VAD-ended utterance; pick the value from a session's data. Decide after the first bench run, not now.
+**None blocking.** All six original open decisions are resolved:
 
-*Resolved since the last revision: O1 → D8 (cascade). O2 → D7 (Haiku 4.5 API). O3 → D9 (wheel-button PTT, captured at setup). O6 → D10 (import phrases, hand-author metadata).*
+| | Resolution |
+|---|---|
+| O1 — LLM routing position | → D8 (cascade, tier 4 only on local reject) |
+| O2 — LLM runtime | → D7 (Claude Haiku 4.5 API, not Ollama) |
+| O3 — PTT key | → D9 (wheel button, captured at setup, bound by device GUID) |
+| O4 — Wake word model | **Moot** — D2 drops the wake word from v1 |
+| O5 — VAD silence timeout | **Moot** — D2 makes PTT release the endpoint; VAD leaves the critical path |
+| O6 — Phrase authorship | → D10 (import from CrewChief SRE config, hand-author descriptions) |
 
 ## 11. Delta from what is on disk
 
 83 tests passing, lint clean, pushed to the public repo.
 
+91 tests passing, lint clean, pushed.
+
 | Component | State | Action |
 |---|---|---|
 | C1, C4, C5, C7, C10 | Built, tested | Keep |
+| C5 tier-2 rewrite | Built, tested | Keep — terse phrasing now resolves at tier 2 |
 | Compute-placement guards (F14) | Built | Keep |
 | C9 installer | Built | Verify on a clean machine |
+| C2 wake word | Built | **Disable** — out of scope under D2 |
 | C7 modifier support | Built | Add unit tests (AC7.3) |
-| C3 wheel PTT | Not built | **Build** (D9) — needs a joystick backend; `pygame` or `inputs` |
-| C6 Haiku tier | Not built | **Build** (D3/D7/D8) |
 | C11 action metadata | Not built | **Build first** — C6 and C8 both depend on it |
+| C6 Haiku tier | **Not built — spec only** | **Build second** (D3/D7/D8) |
+| C3 wheel PTT | Not built | **Build third** (D9) — needs a joystick backend |
 | C8 full action coverage | 12 of 27 intents | **Expand** via C11, add `bindings` command |
 | `NamedPipeSink` | Built | Unsupported under D1; keep for the phase-2 fork |
+| Silero VAD | Built | Off the critical path under D2; keep, disabled |
 | `config.default.toml` | 12 intents | Restructure to the C11 `[[actions]]` shape; add PTT and LLM sections |
 
-**Build order.** C11 first — the metadata registry is what C6's tool definitions and C8's phrase sets are both generated from, so building either before it means writing them twice. Then C6 (Haiku tier) since it is testable offline with a stub, then C3 (wheel PTT) which is the only piece that cannot be verified without you at the rig.
+**Build order.** C11 first — the metadata registry is what C6's tool definitions and C8's phrase sets are both generated from, so building either before it means writing them twice. Then C6, which is fully testable offline with a stubbed client. Then C3, the only piece that cannot be verified without you at the rig.
 
-**New dependency.** C3 needs a joystick backend for DirectInput. `pygame` is heavier but reliable on Windows wheels; `inputs` is lighter but flakier. Neither is currently in `pyproject.toml`.
+**New dependency.** C3 needs a joystick backend for DirectInput. `pygame` is heavier but reliable on Windows wheels; `inputs` is lighter but flakier. Neither is in `pyproject.toml` yet.
 
 Nothing already written needs deleting. The new components attach at existing seams: PTT alongside the wake-word check in the pipeline's IDLE state, and Haiku as tier 4 behind the same `MatchResult` contract the other three tiers already return.
