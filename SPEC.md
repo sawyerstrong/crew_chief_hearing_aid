@@ -292,26 +292,41 @@ Hit rate is reported as **cold, first-attempt** — not after repeating yourself
 
 83 tests passing, lint clean, pushed to the public repo.
 
-91 tests passing, lint clean, pushed.
+**127 tests passing, lint clean.** Every component is now built.
 
-| Component | State | Action |
-|---|---|---|
-| C1, C4, C5, C7, C10 | Built, tested | Keep |
-| C5 tier-2 rewrite | Built, tested | Keep — terse phrasing now resolves at tier 2 |
-| Compute-placement guards (F14) | Built | Keep |
-| C9 installer | Built | Verify on a clean machine |
-| C2 wake word | Built | **Disable** — out of scope under D2 |
-| C7 modifier support | Built | Add unit tests (AC7.3) |
-| C11 action metadata | Not built | **Build first** — C6 and C8 both depend on it |
-| C6 Haiku tier | **Not built — spec only** | **Build second** (D3/D7/D8) |
-| C3 wheel PTT | Not built | **Build third** (D9) — needs a joystick backend |
-| C8 full action coverage | 12 of 27 intents | **Expand** via C11, add `bindings` command |
-| `NamedPipeSink` | Built | Unsupported under D1; keep for the phase-2 fork |
-| Silero VAD | Built | Off the critical path under D2; keep, disabled |
-| `config.default.toml` | 12 intents | Restructure to the C11 `[[actions]]` shape; add PTT and LLM sections |
+| Component | State |
+|---|---|
+| C1 audio capture | Built, tested |
+| C2 wake word | Built, **disabled** (out of scope, D2) |
+| C3 wheel PTT | Built — `setup-ptt` captures a button, pipeline endpoints on release |
+| C4 transcription | Built, tested |
+| C5 matcher tiers 1–3 | Built, tested — IDF query coverage |
+| C6 Haiku tier | Built, 20 offline tests with a stub client |
+| C7 keypress sink | Built, modifier combos supported |
+| C8 27-action coverage | Built — 12 imported, 15 hand-written, `bindings` sheet |
+| C9 installer | Built |
+| C10 diagnostics | Built |
+| C11 action metadata | Built — `sre_key` import, `import-phrases` preview |
+| Compute-placement guards (F14) | Built |
+| `NamedPipeSink` | Built, unsupported under D1 — kept for the phase-2 fork |
+| Silero VAD | Built, off the critical path under D2 |
 
-**Build order.** C11 first — the metadata registry is what C6's tool definitions and C8's phrase sets are both generated from, so building either before it means writing them twice. Then C6, which is fully testable offline with a stubbed client. Then C3, the only piece that cannot be verified without you at the rig.
+### What is verified, and what is not
 
-**New dependency.** C3 needs a joystick backend for DirectInput. `pygame` is heavier but reliable on Windows wheels; `inputs` is lighter but flakier. Neither is in `pyproject.toml` yet.
+**Verified offline** (127 tests, no network, no hardware, no API key): phrase parsing and import, all three local matcher tiers, the evidence gate, config layering and every fatal-misconfiguration path, tool construction, and every tier-4 failure mode via a stub client.
+
+**Verified by hand against the real 4.19.4.0 install:** `doctor`, `bindings`, `import-phrases` (12/12 SRE keys resolve, 0 missing), `match`.
+
+**Not verified — needs the rig:**
+
+| | Why it matters |
+|---|---|
+| AC7.5 — a keypress actually triggers its CrewChief action | **Highest-risk unknown.** Everything downstream assumes it. |
+| AC7.6 — modifier combos trigger | 15 of 27 actions depend on Ctrl/Shift |
+| AC3.1–3.5 — wheel button capture and release timing | No wheel in this environment |
+| AC4.1 — Whisper ≤300ms on CPU | Estimated, not measured |
+| §5.3 tier-4 latency | Estimated at 600ms–1s; measure 20 calls before trusting it |
+
+The first bench session should run in this order: `setup-ptt` → bind keys from `bindings` → `doctor` → `run --dry-run` → **one real keypress to settle AC7.5** → one modifier combo for AC7.6.
 
 Nothing already written needs deleting. The new components attach at existing seams: PTT alongside the wake-word check in the pipeline's IDLE state, and Haiku as tier 4 behind the same `MatchResult` contract the other three tiers already return.

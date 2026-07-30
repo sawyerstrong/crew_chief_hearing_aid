@@ -14,9 +14,18 @@ dependencies = [
 runtime = [
     "sounddevice>=0.4.6",
     "onnxruntime>=1.17",
-    "openwakeword>=0.6.0",
     "faster-whisper>=1.0.3",
     "model2vec>=0.3.0",
+    # Wheel button push-to-talk. Only the joystick subsystem is initialised —
+    # pygame.init() would also bring up video and can steal focus on Windows.
+    "pygame>=2.5",
+    # Tier 4 router. Optional at runtime: without ANTHROPIC_API_KEY the cascade
+    # simply stops at tier 3.
+    "anthropic>=0.40",
+]
+# Wake word is out of scope for v1 (D2) — install only if you re-enable it.
+wakeword = [
+    "openwakeword>=0.6.0",
 ]
 # Optional heavier embedder. Only if model2vec's static embeddings prove
 # insufficient for your phrasing — pulls torch (~2GB).

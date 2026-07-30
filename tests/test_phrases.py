@@ -94,8 +94,13 @@ class TestParseCrewChiefConfig:
 class TestIntent:
     def test_rejects_missing_phrases(self):
         with pytest.raises(ValueError, match="no phrases"):
-            Intent(id="x", action="a", key="F13", phrases=())
+            Intent(id="x", action="a", key="F13", phrases=(), description="d")
 
     def test_rejects_missing_key(self):
         with pytest.raises(ValueError, match="no output key"):
-            Intent(id="x", action="a", key="", phrases=("hello",))
+            Intent(id="x", action="a", key="", phrases=("hello",), description="d")
+
+    def test_rejects_missing_description(self):
+        """The LLM tier cannot route without one, so it is not optional."""
+        with pytest.raises(ValueError, match="no description"):
+            Intent(id="x", action="a", key="F13", phrases=("hello",))

@@ -12,6 +12,7 @@ def intents():
             id="car_ahead_last_lap",
             action="What's the car ahead's last lap time",
             key="F13",
+            description="Lap time of the car directly ahead.",
             phrases=(
                 "what is the car ahead's last lap time",
                 "what's the guy in front running",
@@ -22,6 +23,7 @@ def intents():
             id="car_behind_last_lap",
             action="What's the car behind's last lap time",
             key="F14",
+            description="Lap time of the car directly behind.",
             phrases=(
                 "what is the car behind's last lap time",
                 "what's the guy behind running",
@@ -32,6 +34,7 @@ def intents():
             id="fuel_status",
             action="Get fuel status",
             key="F15",
+            description="Remaining fuel and laps it covers.",
             phrases=(
                 "how is my fuel looking",
                 "what is my fuel status",

@@ -21,10 +21,12 @@ import numpy as np
 
 from .asr import WhisperTranscriber
 from .audio import AudioCapture, CaptureConfig, resolve_input_device
+from .audio.ptt import JoystickUnavailable, NullPTT, WheelPTT
 from .audio.vad import EnergyVAD, SileroVAD
 from .audio.wakeword import AlwaysOpenDetector, WakeWordDetector
 from .config import Config
 from .intent import IntentMatcher, build_embedder
+from .intent.llm import HaikuRouter
 from .logging_setup import UtteranceLog
 from .output import build_sink
 
@@ -73,7 +75,7 @@ class Pipeline:
         self.device = resolve_input_device(audio_cfg.get("input_device"))
 
         ww_cfg = config.section("wakeword")
-        if ww_cfg.get("enabled", True):
+        if ww_cfg.get("enabled", False):
             self.wakeword = WakeWordDetector(
                 model=ww_cfg.get("model", "hey_jarvis"),
                 threshold=float(ww_cfg.get("threshold", 0.55)),
@@ -82,6 +84,24 @@ class Pipeline:
             )
         else:
             self.wakeword = AlwaysOpenDetector()
+
+        # Push-to-talk is the v1 trigger (D2/D9). Button release is the
+        # utterance endpoint, which is why VAD is off the critical path.
+        ptt_cfg = config.section("ptt")
+        self.ptt_enabled = bool(ptt_cfg.get("enabled", True))
+        self.min_hold_ms = int(ptt_cfg.get("min_hold_ms", 120))
+        if self.ptt_enabled and ptt_cfg.get("device_guid"):
+            self.ptt = WheelPTT(
+                device_guid=str(ptt_cfg["device_guid"]),
+                button_index=int(ptt_cfg.get("button_index", -1)),
+            )
+        else:
+            self.ptt = NullPTT()
+            if self.ptt_enabled:
+                log.warning(
+                    "ptt.enabled is true but no device_guid is set — "
+                    "run `crew_chief_hearing_aid setup-ptt`"
+                )
 
         vad_cfg = config.section("vad")
         if vad_cfg.get("enabled", True):
@@ -113,6 +133,19 @@ class Pipeline:
             margin=float(intent_cfg.get("margin", 0.05)),
         )
 
+        # Tier 4. Only consulted when tiers 1-3 reject (D8), so the network stays
+        # off the critical path for the common case.
+        llm_cfg = config.section("llm")
+        if llm_cfg.get("enabled", True):
+            self.router = HaikuRouter(
+                config.intents,
+                model=llm_cfg.get("model", "claude-haiku-4-5"),
+                timeout_s=float(llm_cfg.get("timeout_s", 2.5)),
+                max_tokens=int(llm_cfg.get("max_tokens", 512)),
+            )
+        else:
+            self.router = None
+
         out_cfg = config.section("output")
         sink_kind = "log" if dry_run else out_cfg.get("sink", "keypress")
         self.sink = build_sink(
@@ -120,6 +153,7 @@ class Pipeline:
             key_hold_ms=int(out_cfg.get("key_hold_ms", 150)),
             pipe_name=out_cfg.get("pipe_name", "crewchief-voice"),
         )
+        self.multi_intent_gap_s = int(out_cfg.get("multi_intent_gap_ms", 250)) / 1000.0
 
         log_cfg = config.section("logging")
         self.utterance_log = UtteranceLog(log_cfg.get("dir", "logs"))
@@ -128,11 +162,26 @@ class Pipeline:
         self._buffer: list[np.ndarray] = []
         self._utterance_ms = 0.0
         self._silence_ms = 0.0
+        self._ptt_was_down = False
+        self._ptt_down_at = 0.0
+        self._trigger = "wakeword"
 
     # -- lifecycle ------------------------------------------------------
 
     def preflight(self) -> list[str]:
-        return list(self.sink.preflight(self.config.intents))
+        problems = list(self.sink.preflight(self.config.intents))
+        try:
+            self.ptt.open()
+        except JoystickUnavailable as exc:
+            # AC3.5: degrade to whatever else can trigger, but say so loudly.
+            problems.append(f"push-to-talk unavailable: {exc}")
+            self.ptt = NullPTT()
+        if isinstance(self.ptt, NullPTT) and isinstance(self.wakeword, AlwaysOpenDetector):
+            problems.append("no trigger configured — neither push-to-talk nor wake word")
+        if self.router is not None and not self.router.available:
+            # Not a problem: the cascade degrades to tier 3 by design.
+            log.info("tier 4 disabled — ANTHROPIC_API_KEY not set")
+        return problems
 
     def warmup(self) -> None:
         t0 = time.perf_counter()
@@ -143,8 +192,9 @@ class Pipeline:
 
     # -- frame handling -------------------------------------------------
 
-    def _begin_listening(self, capture: AudioCapture) -> None:
+    def _begin_listening(self, capture: AudioCapture, triggered_by: str = "wakeword") -> None:
         self.state = State.LISTENING
+        self._trigger = triggered_by
         self.stats.wake_events += 1
         self.vad.reset()
         # Pre-roll recovers the command words spoken before the wake word was
@@ -189,16 +239,42 @@ class Pipeline:
             }
         )
 
+        fired: list = []
         if result.matched:
-            delivered = self.sink.fire(result.intent)
-            record["delivered"] = delivered
+            fired = [result.intent]
+        elif self.router is not None and self.router.available:
+            # Tier 4. Only reached because tiers 1-3 rejected, so the network
+            # round trip is paid on the uncommon path only (D8).
+            route = self.router.route(transcript.text)
+            record["llm_ms"] = round(route.latency_ms, 1)
+            record["llm_failed"] = route.failed
+            if route.failed:
+                record["llm_reason"] = route.reason
+            fired = route.intents
+            if fired:
+                record["method"] = "llm"
+                record["intent"] = fired[0].id
+                record["multi_intent"] = [i.id for i in fired]
+            latency_ms = (time.perf_counter() - t0) * 1000
+            record["total_ms"] = round(latency_ms, 1)
+            self.stats.latencies_ms[-1] = latency_ms
+
+        if fired:
+            delivered = []
+            for i, intent in enumerate(fired):
+                if i:
+                    # CrewChief needs a beat between keypresses or it can miss
+                    # the second while still speaking the first.
+                    time.sleep(self.multi_intent_gap_s)
+                delivered.append(self.sink.fire(intent))
+            record["delivered"] = all(delivered)
             self.stats.fired += 1
             log.info(
                 "%r -> %s (%.2f via %s) in %.0fms",
                 transcript.text,
-                result.intent.id,
+                ", ".join(i.id for i in fired),
                 result.score,
-                result.method,
+                record["method"],
                 latency_ms,
             )
         else:
@@ -214,15 +290,41 @@ class Pipeline:
         self.utterance_log.write(record)
 
     def _handle_frame(self, frame: np.ndarray, capture: AudioCapture) -> None:
+        ptt_down = self.ptt.is_down()
+        ptt_pressed = ptt_down and not self._ptt_was_down
+        ptt_released = self._ptt_was_down and not ptt_down
+        self._ptt_was_down = ptt_down
+
         if self.state is State.IDLE:
-            if self.wakeword.detect(frame):
-                self._begin_listening(capture)
+            if ptt_pressed:
+                self._ptt_down_at = time.monotonic()
+                self._begin_listening(capture, triggered_by="ptt")
+            elif self.wakeword.detect(frame):
+                self._begin_listening(capture, triggered_by="wakeword")
             return
 
         self._buffer.append(frame)
         frame_ms = len(frame) / self.capture_config.sample_rate * 1000
         self._utterance_ms += frame_ms
 
+        if self._trigger == "ptt":
+            # Release IS the endpoint. No VAD, no silence timeout — this is the
+            # whole reason the happy path is ~900ms faster than the wake-word
+            # path it replaced.
+            if ptt_released:
+                held_ms = (time.monotonic() - self._ptt_down_at) * 1000
+                if held_ms < self.min_hold_ms:
+                    log.debug("ptt tap of %.0fms below min_hold; discarded", held_ms)
+                    self._buffer = []
+                    self.state = State.IDLE
+                    return
+                self._finish_utterance()
+            elif self._utterance_ms >= self.max_utterance_ms:
+                log.debug("utterance hit max length; cutting off")
+                self._finish_utterance()
+            return
+
+        # Wake-word path only: fall back to VAD endpointing.
         if self.vad.is_speech(frame):
             self._silence_ms = 0.0
         else:
@@ -251,6 +353,7 @@ class Pipeline:
             except KeyboardInterrupt:
                 log.info("interrupted")
             finally:
+                self.ptt.close()
                 self.sink.close()
         log.info("session: %s", self.stats.summary())
         return self.stats

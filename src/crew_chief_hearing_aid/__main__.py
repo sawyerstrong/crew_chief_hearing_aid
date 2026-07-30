@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 
@@ -89,6 +90,35 @@ def cmd_doctor(args) -> int:
         print(f"  ! {exc}")
         problems += 1
 
+    print("\n== Trigger ==")
+    ptt_cfg = config.section("ptt")
+    if not ptt_cfg.get("enabled", True):
+        print("  ! push-to-talk disabled and wake word is out of scope — no trigger")
+        problems += 1
+    elif not ptt_cfg.get("device_guid"):
+        print("  ! no push-to-talk button bound — run `setup-ptt`")
+        problems += 1
+    else:
+        try:
+            from .audio.ptt import WheelPTT
+
+            ptt = WheelPTT(str(ptt_cfg["device_guid"]), int(ptt_cfg.get("button_index", -1)))
+            ptt.open()
+            print(f"  push-to-talk: {ptt._device_name} button {ptt.button_index}")
+            ptt.close()
+        except Exception as exc:  # noqa: BLE001 - doctor reports, never raises
+            print(f"  ! {exc}")
+            problems += 1
+
+    print("\n== Tier 4 (LLM) ==")
+    if not config.get("llm", "enabled", True):
+        print("  disabled in config; tiers 1-3 only")
+    elif os.environ.get("ANTHROPIC_API_KEY"):
+        # Presence only. Never the value, never a prefix — see AC6.7.
+        print(f"  ANTHROPIC_API_KEY set; model {config.get('llm', 'model')}")
+    else:
+        print("  ANTHROPIC_API_KEY not set — cascade will stop at tier 3")
+
     print("\n== Compute placement ==")
     # The zero-VRAM property is load-bearing (the GPU is rendering VR), so it
     # gets checked rather than assumed.
@@ -133,6 +163,86 @@ def cmd_doctor(args) -> int:
 
     print(f"\n{problems} problem(s).")
     return 1 if problems else 0
+
+
+def cmd_bindings(args) -> int:
+    """The sheet you work from while binding keys in CrewChief."""
+    config = _load(args)
+    print("In CrewChief: Add/Remove Actions -> add each action, then Assign the key.\n")
+    width = max(len(i.action) for i in config.intents)
+    for intent in config.intents:
+        print(f"  {intent.action:<{width}}  ->  {intent.key}")
+    print(f"\n{len(config.intents)} actions.")
+    print("F13-F24 have no physical keys, so nothing else can ever emit them.")
+    return 0
+
+
+def cmd_setup_ptt(args) -> int:
+    from .audio.ptt import JoystickUnavailable, capture_button, list_joysticks
+
+    try:
+        devices = list_joysticks()
+    except JoystickUnavailable as exc:
+        print(f"! {exc}", file=sys.stderr)
+        return 1
+
+    if not devices:
+        print("No wheel or joystick detected. Is it plugged in and powered?", file=sys.stderr)
+        return 1
+
+    print("Detected devices:")
+    for _guid, name, buttons in devices:
+        print(f"  {name}  ({buttons} buttons)")
+
+    print(f"\nPress the wheel button you want for push-to-talk ({args.timeout:.0f}s)...")
+    try:
+        button = capture_button(timeout_s=args.timeout)
+    except JoystickUnavailable as exc:
+        print(f"! {exc}", file=sys.stderr)
+        return 1
+
+    if button is None:
+        print("Timed out; nothing captured.", file=sys.stderr)
+        return 1
+
+    print(f"\nCaptured: {button}")
+    target = user_config_path()
+    print("\nAdd this to your config:")
+    print(f"  {target}\n")
+    print("[ptt]")
+    print("enabled = true")
+    print(f'device_guid = "{button.device_guid}"')
+    print(f"button_index = {button.button_index}")
+    print(
+        "\n# Bound by GUID, not index: joystick indices reshuffle when USB devices\n"
+        "# re-enumerate, which would silently move push-to-talk to another device."
+    )
+    return 0
+
+
+def cmd_import_phrases(args) -> int:
+    """Preview what would be imported per action, before it ships."""
+    from .config import load_phrase_source
+
+    config = _load(args)
+    source = load_phrase_source()
+    print(f"phrase corpus: {len(source)} entries\n")
+    imported = missing = handwritten = 0
+    for intent in config.intents:
+        if not intent.sre_key:
+            handwritten += 1
+            continue
+        phrases = source.get(intent.sre_key)
+        if phrases is None:
+            missing += 1
+            print(f"  ! {intent.id}: sre_key {intent.sre_key!r} NOT FOUND")
+        else:
+            imported += 1
+            print(f"  {intent.id}  <-  {intent.sre_key}")
+            for p in phrases:
+                print(f"      {p!r}")
+    print(f"\n{imported} imported, {handwritten} hand-written, {missing} missing.")
+    return 1 if missing else 0
 
 
 def cmd_match(args) -> int:
@@ -198,6 +308,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = sub.add_parser("doctor", help="check install, bindings and config")
     doctor.set_defaults(func=cmd_doctor)
+
+    bindings = sub.add_parser("bindings", help="print the CrewChief action->key sheet")
+    bindings.set_defaults(func=cmd_bindings)
+
+    ptt = sub.add_parser("setup-ptt", help="capture a wheel button for push-to-talk")
+    ptt.add_argument("--timeout", type=float, default=30.0)
+    ptt.set_defaults(func=cmd_setup_ptt)
+
+    imp = sub.add_parser("import-phrases", help="preview phrases imported from CrewChief")
+    imp.set_defaults(func=cmd_import_phrases)
 
     match = sub.add_parser("match", help="test intent matching on one or more phrases")
     match.add_argument("phrase", nargs="+")

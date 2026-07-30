@@ -1,210 +1,371 @@
-# crew_chief_hearing_aid defaults. DO NOT EDIT — copy the bits you need into your own
-# %APPDATA%\crew_chief_hearing_aid\config.toml, which is merged over this file at startup.
-# Run `crew_chief_hearing_aid init-config` to create that file.
+# crew_chief_hearing_aid defaults. DO NOT EDIT — copy what you need into your
+# own %APPDATA%\crew_chief_hearing_aid\config.toml, which is merged over this
+# file at startup. Run `crew_chief_hearing_aid init-config` to create it.
 
 [audio]
 # Matched as a case-insensitive substring against enumerated input devices.
-# Never a bare index: device indices reshuffle across reboots and USB replugs,
-# and this rig has four active microphones plus NVIDIA Broadcast's virtual
-# endpoints. Run `crew_chief_hearing_aid devices` to list what is available.
+# Never a bare index: indices reshuffle across reboots and USB replugs, and this
+# rig has four active microphones plus NVIDIA Broadcast's virtual endpoints.
+# Run `crew_chief_hearing_aid devices` to list what is available.
 input_device = "USB PnP Audio Device"
 sample_rate = 16000
 block_ms = 32
-# Rolling audio kept before wake-word fires, so the command that follows it
-# immediately is not clipped.
+# Rolling audio kept before the trigger fires, so the first word is not clipped.
 preroll_ms = 512
-# Stop capturing after this much trailing silence.
+# Only used on the (disabled) wake-word path. PTT release is the endpoint.
 silence_timeout_ms = 900
-# Hard cap on a single utterance.
 max_utterance_ms = 6000
 
-[wakeword]
+[ptt]
+# Push-to-talk on a wheel button. This is the only trigger in v1.
+# Run `crew_chief_hearing_aid setup-ptt` to capture a button — it fills in
+# device_guid and button_index for you.
 enabled = true
-# Pretrained and speaker-independent. A model trained on your own voice is more
-# accurate but is not portable to another person's machine — keep those in
-# wakeword_custom/ and point `model` at one there if you train one.
+device_guid = ""
+button_index = -1
+poll_hz = 60
+# Ignore taps shorter than this; stops a fumbled press starting a transcription.
+min_hold_ms = 120
+
+[wakeword]
+# Out of scope for v1 (D2). Always-on listening adds a false-positive surface
+# (Discord, sim audio) and forces a ~900ms VAD timeout onto the critical path.
+# PTT release endpoints directly, which is why the happy path is ~1.2s.
+enabled = false
 model = "hey_jarvis"
 threshold = 0.55
-# Refractory period so one utterance cannot retrigger the pipeline.
 cooldown_ms = 1500
 
 [vad]
-enabled = true
+# Not needed for endpointing under PTT — button release is the endpoint.
+enabled = false
 threshold = 0.5
 
 [asr]
-# tiny.en is ~150ms for a 2s utterance on CPU and is sufficient because the
-# downstream stage classifies rather than reads. Move to base.en if the
-# transcript log shows genuine word errors on your command set.
+# CPU, int8. This is load-bearing, not a default to tweak: the GPU is rendering
+# VR at 90fps, and a CUDA context plus cuDNN kernels costs 300-600MB to run a
+# 78MB model badly. `doctor` checks this and warns if it drifts.
 model = "tiny.en"
 device = "cpu"
 compute_type = "int8"
 beam_size = 1
-# Bias the decoder toward racing vocabulary.
 initial_prompt = "Race engineer radio: lap time, gap, fuel, tyres, pit, sector, position, delta."
 
 [intent]
-# model2vec static embeddings. "hashing" needs no download and is the fallback
-# if model fetching fails; "sentence-transformers" pulls torch.
 embedder = "model2vec"
 embedder_model = "minishlab/potion-base-8M"
+# Tier 2 is IDF-weighted query coverage: how much of what you SAID is explained
+# by the phrase. Asymmetric on purpose, opposite to containment.
 token_threshold = 0.72
 embed_threshold = 0.60
-# Reject when the top two intents are this close, even if the best score is
-# high. Asking again beats firing the wrong command.
+# Reject when the top two intents are this close, even at a high score.
 margin = 0.05
+# Absolute IDF mass required before a match counts. Stops a query of only common
+# words ("what is my") being "fully covered" by any phrase containing them.
+min_evidence = 2.0
+
+[llm]
+# Tier 4: consulted only when tiers 1-3 reject. Buys multi-intent and paraphrase
+# headroom without putting the network on the critical path for common commands.
+# Needs ANTHROPIC_API_KEY in the environment — never put a key in this file.
+enabled = true
+model = "claude-haiku-4-5"
+timeout_s = 2.5
+max_tokens = 512
 
 [output]
-# "keypress" needs no CrewChief changes — bind the keys below in CrewChief's
-# Add/Remove Actions. "pipe" targets a forked CrewChief exposing a named pipe
-# into handleRecognisedText, which unlocks commands that are not button-bindable
-# (gap ahead/behind among them). "log" is a dry run.
+# "keypress" needs no CrewChief changes — bind the keys below in Add/Remove
+# Actions. "pipe" targets a forked CrewChief and is unsupported in v1.
+# "log" is a dry run.
 sink = "keypress"
 pipe_name = "crewchief-voice"
-# Hold time for the synthetic keypress. CrewChief polls controllers at
-# hold_button_poll_frequency (100ms by default), so anything under ~120ms can be
-# missed entirely.
+# CrewChief polls controllers at hold_button_poll_frequency (100ms default),
+# so anything under ~120ms can fall between polls and be missed entirely.
 key_hold_ms = 150
+# Gap between keypresses when one utterance resolves to several intents.
+multi_intent_gap_ms = 250
 
 [logging]
-# Every utterance gets a JSONL record: transcript, chosen intent, score, method,
-# runner-up. This is the artifact for tuning thresholds and spotting phrases
-# that need adding — without it you cannot tell a bad transcript from a bad
-# threshold.
+# Every utterance gets a JSONL record: transcript, chosen intent, score, tier,
+# runner-up. This is the artifact for tuning — without it you cannot tell a bad
+# transcript from a badly-tuned threshold.
 dir = "logs"
 level = "INFO"
-save_audio_on_reject = true
 
 
-# --- Intents -----------------------------------------------------------
-# `action` is the label in CrewChief's Add/Remove Actions dialog; bind it to
-# `key` there. F13–F24 are chosen deliberately: no physical keyboard has them,
-# so nothing else on the system will ever emit them.
+# --- Actions -----------------------------------------------------------
+#
+# 27 entries: every action in CrewChief's Add/Remove Actions dialog except
+# "Talk to Crew Chief", which is CrewChief's own push-to-talk and irrelevant
+# here since we bypass its recogniser entirely.
+#
+# `action`      — the label in Add/Remove Actions. Bind it to `key` there.
+# `description` — written for the LLM tier; says WHEN to call, not just what.
+# `sre_key`     — entry in CrewChief's speech_recognition_config.txt to import
+#                 phrases from. Absent for actions CrewChief exposes as a button
+#                 but has no voice command for; those carry explicit `phrases`.
+#
+# F13–F24 have no physical keys, so nothing else on the system can ever emit
+# them. 27 actions need more than 12, hence the Ctrl/Shift combos.
+
+# ---- Race-critical: plain F13–F24 ----
 
 [[intents]]
 id = "car_ahead_last_lap"
 action = "What's the car ahead's last lap time"
 key = "F13"
+description = "Report the last lap time set by the car directly ahead on track. Call this when the driver asks how fast the car in front is going or what it is lapping."
 phrases = [
   "what is the car ahead's last lap time",
   "what's the guy in front running",
   "what is the car in front lapping",
   "how fast is the car ahead going",
-  "what lap time is the guy ahead doing",
+  "car ahead lap time",
 ]
 
 [[intents]]
 id = "car_behind_last_lap"
 action = "What's the car behind's last lap time"
 key = "F14"
+description = "Report the last lap time set by the car directly behind on track. Call this when the driver asks how fast the car behind is going or whether it is catching up."
 phrases = [
   "what is the car behind's last lap time",
   "what's the guy behind running",
-  "what is the car behind lapping",
   "how fast is the car behind going",
-  "what lap time is the guy behind doing",
+  "car behind lap time",
 ]
 
 [[intents]]
 id = "fuel_status"
-action = "Get fuel status"
+action = "Report fuel/battery status"
 key = "F15"
-phrases = [
-  "how is my fuel looking",
-  "what is my fuel status",
-  "how much fuel do i have left",
-  "how many laps of fuel left",
-]
+sre_key = "HOWS_MY_FUEL"
+description = "Report remaining fuel or battery and how many laps it covers. Call this for any question about fuel level, fuel usage, or whether the driver can make the end of the race."
+
+[[intents]]
+id = "car_damage"
+action = "Report car damage"
+key = "F16"
+sre_key = "DAMAGE_REPORT"
+description = "Report current car damage. Call this after contact, or when the driver asks whether the car is hurt, broken, or still okay."
 
 [[intents]]
 id = "car_status"
-action = "Get car status"
-key = "F16"
-phrases = [
-  "what is my car status",
-  "how is the car looking",
-  "give me a car status report",
-]
-
-[[intents]]
-id = "damage_report"
-action = "Get damage report"
+action = "Report car status and damage"
 key = "F17"
-phrases = [
-  "what is my damage report",
-  "how bad is the damage",
-  "do i have any damage",
-]
+sre_key = "CAR_STATUS"
+description = "Report combined car condition — tyres, brakes, engine, and damage. Call this for a general 'how is the car' question rather than a damage-specific one."
 
 [[intents]]
 id = "session_status"
-action = "Get session status"
+action = "Report session status"
 key = "F18"
-phrases = [
-  "what is my session status",
-  "how long is left in this session",
-  "how many laps to go",
-  "where am i in the session",
-]
+sre_key = "SESSION_STATUS"
+description = "Report session position, laps or time remaining, and flags. Call this when the driver asks where they are in the race or how much is left."
 
 [[intents]]
-id = "status"
-action = "Get status"
+id = "full_status"
+action = "Report car, damage and session status"
 key = "F19"
-phrases = [
-  "give me a full status report",
-  "what is my status",
-  "how am i doing out there",
-]
+sre_key = "STATUS"
+description = "Full combined update: car, damage, and session. Call this when the driver asks for everything at once, or a general 'how am I doing'."
 
 [[intents]]
 id = "pit_prediction"
-action = "Pit prediction"
+action = "Pit stop prediction"
 key = "F20"
+description = "Predict what track position the driver would rejoin in after pitting now. Call this when the driver is weighing whether to box."
 phrases = [
   "what is the pit prediction",
   "where will i come out if i pit now",
   "what happens if i pit this lap",
+  "pit prediction",
 ]
 
 [[intents]]
-id = "repeat_last"
-action = "Repeat last message"
+id = "repeat_last_message"
+action = "Press to replay the last message"
 key = "F21"
-phrases = [
-  "say that again",
-  "repeat the last message",
-  "what was that",
-  "come again",
-]
+sre_key = "REPEAT_LAST_MESSAGE"
+description = "Replay the last thing the crew chief said. Call this when the driver missed a message or asks for it again."
 
 [[intents]]
 id = "toggle_mute"
 action = "Toggle mute"
 key = "F22"
-phrases = [
-  "be quiet for a bit",
-  "mute yourself",
-  "stop talking to me",
-  "unmute yourself",
-]
+sre_key = "KEEP_QUIET"
+description = "Mute or unmute the crew chief. Call this when the driver wants silence to concentrate, or wants the chief talking again."
 
 [[intents]]
 id = "toggle_spotter"
 action = "Toggle Spotter on/off"
 key = "F23"
+description = "Turn the spotter's car-alongside calls on or off. Call this when the driver mentions the spotter specifically."
 phrases = [
   "turn the spotter off",
   "turn the spotter on",
   "toggle the spotter",
+  "spotter off",
 ]
 
 [[intents]]
 id = "toggle_race_updates"
 action = "Toggle race updates on/off"
 key = "F24"
+description = "Turn periodic race position and gap updates on or off. Call this when the driver wants fewer or more routine updates, without muting entirely."
 phrases = [
   "turn race updates off",
   "turn race updates on",
   "toggle race updates",
+  "stop the race updates",
+]
+
+# ---- Secondary: Ctrl+F13–F24 ----
+
+[[intents]]
+id = "corner_names"
+action = "Read corner names for current lap"
+key = "ctrl+F13"
+sre_key = "PLAY_CORNER_NAMES"
+description = "Read out the names of the corners on this track. Call this when the driver asks what a corner is called or wants the lap talked through."
+
+[[intents]]
+id = "toggle_yellow_flags"
+action = "Toggle yellow flag messages"
+key = "ctrl+F14"
+sre_key = "ENABLE_YELLOW_FLAG_MESSAGES"
+description = "Turn yellow flag announcements on or off. Call this only when the driver mentions yellows or caution messages specifically."
+
+[[intents]]
+id = "toggle_opponent_deltas"
+action = "Toggle opponent deltas on/off for each lap"
+key = "ctrl+F15"
+description = "Turn per-lap delta calls for nearby cars on or off. Call this when the driver asks about deltas to other cars specifically."
+phrases = [
+  "toggle opponent deltas",
+  "turn opponent deltas off",
+  "turn opponent deltas on",
+  "stop reading me deltas",
+]
+
+[[intents]]
+id = "toggle_hard_part_messages"
+action = "Toggle delay messages on hard parts"
+key = "ctrl+F16"
+sre_key = "DONT_TALK_IN_THE_CORNERS"
+description = "Stop or resume the chief talking during corners and braking zones. Call this when the driver says not to talk in the hard parts of the lap."
+
+[[intents]]
+id = "toggle_cut_track_warnings"
+action = "Toggle cut track warnings on / off"
+key = "ctrl+F17"
+description = "Turn track-limits warnings on or off. Call this when the driver mentions cutting or track limits."
+phrases = [
+  "toggle cut track warnings",
+  "turn off cut track warnings",
+  "stop warning me about track limits",
+]
+
+[[intents]]
+id = "toggle_manual_formation_lap"
+action = "Toggle manual formation lap mode"
+key = "ctrl+F18"
+sre_key = "ENABLE_MANUAL_FORMATION_LAP"
+description = "Enter or leave manual formation lap mode. Call this at the start of a race with a rolling or formation start."
+
+[[intents]]
+id = "volume_up"
+action = "Increase messages volume"
+key = "ctrl+F19"
+description = "Turn the crew chief's volume up. Call this when the driver says they cannot hear the chief."
+phrases = [
+  "turn the volume up",
+  "i cant hear you",
+  "increase the volume",
+]
+
+[[intents]]
+id = "volume_down"
+action = "Decrease messages volume"
+key = "ctrl+F20"
+description = "Turn the crew chief's volume down. Call this when the driver says the chief is too loud."
+phrases = [
+  "turn the volume down",
+  "youre too loud",
+  "decrease the volume",
+]
+
+[[intents]]
+id = "print_track_data"
+action = "Print track and position info"
+key = "ctrl+F21"
+description = "Dump track and position debug information to the CrewChief console. Diagnostic — call only if the driver explicitly asks for track data or debug info."
+phrases = [
+  "print track data",
+  "print track and position info",
+  "dump track info",
+]
+
+[[intents]]
+id = "add_track_landmark"
+action = "Add Start / end track landmark"
+key = "ctrl+F22"
+description = "Mark the start or end of a named track landmark at the current position. Call this only while the driver is explicitly recording landmarks."
+phrases = [
+  "add a track landmark",
+  "mark this landmark",
+  "set a landmark here",
+]
+
+[[intents]]
+id = "reset_vr_view"
+action = "Reset VR view"
+key = "ctrl+F23"
+description = "Re-centre the VR headset view. Call this when the driver says their view is off-centre or asks to recentre."
+phrases = [
+  "reset my vr view",
+  "recentre the view",
+  "reset the headset view",
+]
+
+[[intents]]
+id = "toggle_track_landmark_recording"
+action = "Start / stop track landmarks recording"
+key = "ctrl+F24"
+description = "Start or stop recording track landmarks. Call this only when the driver is explicitly building a landmark set."
+phrases = [
+  "start recording track landmarks",
+  "stop recording track landmarks",
+  "toggle landmark recording",
+]
+
+# ---- Rally: Shift+F13–F15 ----
+
+[[intents]]
+id = "toggle_pace_notes_playback"
+action = "Start / stop playing pace notes"
+key = "shift+F13"
+sre_key = "START_PACE_NOTES_PLAYBACK"
+description = "Start or stop pace note playback. Rally only — call this when the driver asks for pace notes to be read."
+
+[[intents]]
+id = "toggle_pace_notes_recording"
+action = "Start / stop recording pace notes"
+key = "shift+F14"
+description = "Start or stop recording pace notes. Rally only — call this when the driver is dictating notes on a recce run."
+phrases = [
+  "start recording pace notes",
+  "stop recording pace notes",
+  "toggle pace note recording",
+]
+
+[[intents]]
+id = "toggle_stage_recce"
+action = "Toggle stage recce mode (rally only)"
+key = "shift+F15"
+description = "Enter or leave stage reconnaissance mode. Rally only."
+phrases = [
+  "toggle stage recce mode",
+  "start stage recce",
+  "enter recce mode",
 ]

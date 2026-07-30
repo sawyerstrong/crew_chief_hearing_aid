@@ -77,7 +77,7 @@ class TestEvidenceGate:
         assert not matcher.match("what is my").matched
 
     def test_single_discriminative_word_is_enough(self, matcher):
-        for word, expected in [("fuel", "fuel_status"), ("damage", "damage_report")]:
+        for word, expected in [("fuel", "fuel_status"), ("damage", "car_damage")]:
             result = matcher.match(word)
             assert result.matched, f"{word!r} rejected ({result.reject_reason})"
             assert result.intent.id == expected
@@ -85,18 +85,23 @@ class TestEvidenceGate:
     def test_terse_phrasing_resolves_without_the_embedder(self, matcher):
         """The case that motivated the tier-2 rewrite.
 
-        Must resolve at tier 2 -- microseconds, deterministic, no model. If
-        this starts matching via "embedding", the cheap path has regressed.
+        Must resolve on a *local* tier -- exact or coverage, both microseconds
+        and deterministic. Falling through to "embedding" means the cheap path
+        regressed; falling through to "llm" would mean paying a network round
+        trip for a phrase we already know.
         """
         for text, expected in [
             ("car ahead laptime", "car_ahead_last_lap"),
             ("car behind laptime", "car_behind_last_lap"),
             ("car ahead lap time", "car_ahead_last_lap"),
+            ("fuel", "fuel_status"),
         ]:
             result = matcher.match(text)
             assert result.matched, f"{text!r} rejected ({result.reject_reason})"
             assert result.intent.id == expected
-            assert result.method == "token", f"{text!r} fell through to {result.method}"
+            assert result.method in {"exact", "token"}, (
+                f"{text!r} fell through to {result.method}"
+            )
 
 
 def test_every_intent_has_coverage(matcher):

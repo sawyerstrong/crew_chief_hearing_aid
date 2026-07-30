@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .intent.phrases import Intent
+from .intent.phrases import Intent, parse_crewchief_config
 
 APP_NAME = "crew_chief_hearing_aid"
 
@@ -62,7 +62,31 @@ class Config:
         return next((i for i in self.intents if i.id == intent_id), None)
 
 
-def _build_intents(raw: dict[str, Any]) -> list[Intent]:
+def upstream_phrase_config_path() -> Path:
+    """Vendored snapshot of CrewChief's speech_recognition_config.txt.
+
+    Vendored rather than read from the install because CrewChief's ClickOnce
+    layout does not reliably expose it, CI has no CrewChief at all, and G4
+    requires the config to load on a machine that has never run the sim. A
+    local user override, if present, takes precedence.
+    """
+    return Path(__file__).resolve().parent.parent.parent / "data" / (
+        "speech_recognition_config.upstream.txt"
+    )
+
+
+def load_phrase_source() -> dict[str, list[str]]:
+    """Parse the phrase corpus, preferring a local CrewChief override."""
+    from .crewchief import user_phrase_override_path
+
+    for path in (user_phrase_override_path(), upstream_phrase_config_path()):
+        if path.is_file():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            return parse_crewchief_config(text)
+    return {}
+
+
+def _build_intents(raw: dict[str, Any], phrase_source: dict[str, list[str]]) -> list[Intent]:
     entries = raw.get("intents", [])
     if not isinstance(entries, list) or not entries:
         raise ValueError("config defines no [[intents]]")
@@ -71,11 +95,30 @@ def _build_intents(raw: dict[str, Any]) -> list[Intent]:
     seen_ids: set[str] = set()
     seen_keys: dict[str, str] = {}
     for entry in entries:
+        intent_id = str(entry["id"])
+        phrases = tuple(str(p) for p in entry.get("phrases", ()))
+        sre_key = str(entry.get("sre_key", "")).strip()
+
+        # Explicit phrases win; otherwise import from CrewChief's own config.
+        if not phrases and sre_key:
+            if sre_key not in phrase_source:
+                raise ValueError(
+                    f"intent {intent_id!r} references sre_key {sre_key!r}, which is not "
+                    f"in the phrase corpus. A CrewChief update may have renamed it."
+                )
+            phrases = tuple(phrase_source[sre_key])
+        if not phrases:
+            raise ValueError(
+                f"intent {intent_id!r} has neither phrases nor a resolvable sre_key"
+            )
+
         intent = Intent(
-            id=str(entry["id"]),
+            id=intent_id,
             action=str(entry.get("action", "")),
             key=str(entry["key"]),
-            phrases=tuple(str(p) for p in entry.get("phrases", ())),
+            phrases=phrases,
+            description=str(entry.get("description", "")),
+            sre_key=sre_key,
         )
         if intent.id in seen_ids:
             raise ValueError(f"duplicate intent id {intent.id!r}")
@@ -83,7 +126,8 @@ def _build_intents(raw: dict[str, Any]) -> list[Intent]:
 
         # Two intents on one key means one of them silently never fires. That is
         # a config error worth failing at startup rather than mid-race.
-        key_upper = intent.key.upper()
+        # Normalised so ctrl+shift+F13 and shift+ctrl+F13 collide as they should.
+        key_upper = _normalize_key_for_collision(intent.key)
         if key_upper in seen_keys:
             raise ValueError(
                 f"intents {seen_keys[key_upper]!r} and {intent.id!r} "
@@ -94,7 +138,22 @@ def _build_intents(raw: dict[str, Any]) -> list[Intent]:
     return intents
 
 
-def load_config(user_path: Path | None = None, default_path: Path | None = None) -> Config:
+def _normalize_key_for_collision(spec: str) -> str:
+    try:
+        from .output.keypress import normalize_key
+
+        return normalize_key(spec)
+    except Exception:
+        # Non-Windows or an unparseable spec: fall back to a plain fold rather
+        # than failing config load. keypress.preflight() reports the real error.
+        return spec.upper()
+
+
+def load_config(
+    user_path: Path | None = None,
+    default_path: Path | None = None,
+    phrase_source: dict[str, list[str]] | None = None,
+) -> Config:
     default_path = default_path or default_config_path()
     if not default_path.exists():
         raise FileNotFoundError(f"missing packaged defaults at {default_path}")
@@ -112,4 +171,11 @@ def load_config(user_path: Path | None = None, default_path: Path | None = None)
         raw = _deep_merge(raw, override)
         sources.append(user_path)
 
-    return Config(raw=raw, intents=_build_intents(raw), source_paths=tuple(sources))
+    if phrase_source is None:
+        phrase_source = load_phrase_source()
+
+    return Config(
+        raw=raw,
+        intents=_build_intents(raw, phrase_source),
+        source_paths=tuple(sources),
+    )

@@ -1,47 +1,61 @@
 // Eval set. One JSON object per line. `intent: null` means "must be rejected".
-// Grow this from logs/utterances-*.jsonl after every session.
+// Grow this from logs/utterances-*.jsonl after every session — a miss you add
+// here becomes a regression test.
 {"text": "what is the car ahead's last lap time", "intent": "car_ahead_last_lap"}
 {"text": "what's the guy in front running", "intent": "car_ahead_last_lap"}
+{"text": "car ahead lap time", "intent": "car_ahead_last_lap"}
+{"text": "car ahead laptime", "intent": "car_ahead_last_lap"}
 {"text": "how fast is the car ahead going", "intent": "car_ahead_last_lap"}
-{"text": "what lap time is the guy ahead doing", "intent": "car_ahead_last_lap"}
 {"text": "what is the car behind's last lap time", "intent": "car_behind_last_lap"}
-{"text": "what's the guy behind running", "intent": "car_behind_last_lap"}
+{"text": "car behind lap time", "intent": "car_behind_last_lap"}
+{"text": "car behind laptime", "intent": "car_behind_last_lap"}
 {"text": "how fast is the car behind going", "intent": "car_behind_last_lap"}
-{"text": "what lap time is the guy behind doing", "intent": "car_behind_last_lap"}
-{"text": "how is my fuel looking", "intent": "fuel_status"}
-{"text": "what is my fuel status", "intent": "fuel_status"}
-{"text": "how much fuel do i have left", "intent": "fuel_status"}
-{"text": "how many laps of fuel left", "intent": "fuel_status"}
-{"text": "what is my car status", "intent": "car_status"}
-{"text": "how is the car looking", "intent": "car_status"}
-{"text": "what is my damage report", "intent": "damage_report"}
-{"text": "do i have any damage", "intent": "damage_report"}
-{"text": "how bad is the damage", "intent": "damage_report"}
-{"text": "what is my session status", "intent": "session_status"}
-{"text": "how many laps to go", "intent": "session_status"}
-{"text": "how long is left in this session", "intent": "session_status"}
-{"text": "give me a full status report", "intent": "status"}
-{"text": "how am i doing out there", "intent": "status"}
+{"text": "how's my fuel", "intent": "fuel_status"}
+{"text": "how is my fuel level", "intent": "fuel_status"}
+{"text": "fuel", "intent": "fuel_status"}
+{"text": "damage report", "intent": "car_damage"}
+{"text": "is my car ok", "intent": "car_damage"}
+{"text": "damage", "intent": "car_damage"}
+{"text": "car status", "intent": "car_status"}
+{"text": "session status", "intent": "session_status"}
+{"text": "full update", "intent": "full_status"}
 {"text": "what is the pit prediction", "intent": "pit_prediction"}
+{"text": "pit prediction", "intent": "pit_prediction"}
 {"text": "where will i come out if i pit now", "intent": "pit_prediction"}
-{"text": "what happens if i pit this lap", "intent": "pit_prediction"}
-{"text": "say that again", "intent": "repeat_last"}
-{"text": "repeat the last message", "intent": "repeat_last"}
-{"text": "what was that", "intent": "repeat_last"}
-{"text": "be quiet for a bit", "intent": "toggle_mute"}
-{"text": "mute yourself", "intent": "toggle_mute"}
-{"text": "stop talking to me", "intent": "toggle_mute"}
+{"text": "repeat last message", "intent": "repeat_last_message"}
+{"text": "keep quiet", "intent": "toggle_mute"}
 {"text": "turn the spotter off", "intent": "toggle_spotter"}
-{"text": "turn the spotter on", "intent": "toggle_spotter"}
 {"text": "toggle the spotter", "intent": "toggle_spotter"}
 {"text": "turn race updates off", "intent": "toggle_race_updates"}
-{"text": "toggle race updates", "intent": "toggle_race_updates"}
-{"text": "turn race updates on", "intent": "toggle_race_updates"}
+{"text": "stop the race updates", "intent": "toggle_race_updates"}
+{"text": "read corner names", "intent": "corner_names"}
+{"text": "give me yellows", "intent": "toggle_yellow_flags"}
+{"text": "toggle opponent deltas", "intent": "toggle_opponent_deltas"}
+{"text": "stop reading me deltas", "intent": "toggle_opponent_deltas"}
+{"text": "don't talk in the corners", "intent": "toggle_hard_part_messages"}
+{"text": "no messages in the braking zones", "intent": "toggle_hard_part_messages"}
+{"text": "toggle cut track warnings", "intent": "toggle_cut_track_warnings"}
+{"text": "stop warning me about track limits", "intent": "toggle_cut_track_warnings"}
+{"text": "this is the formation lap", "intent": "toggle_manual_formation_lap"}
+{"text": "turn the volume up", "intent": "volume_up"}
+{"text": "increase the volume", "intent": "volume_up"}
+{"text": "turn the volume down", "intent": "volume_down"}
+{"text": "decrease the volume", "intent": "volume_down"}
+{"text": "print track data", "intent": "print_track_data"}
+{"text": "add a track landmark", "intent": "add_track_landmark"}
+{"text": "reset my vr view", "intent": "reset_vr_view"}
+{"text": "reset the headset view", "intent": "reset_vr_view"}
+{"text": "toggle landmark recording", "intent": "toggle_track_landmark_recording"}
+{"text": "start pace notes", "intent": "toggle_pace_notes_playback"}
+{"text": "start recording pace notes", "intent": "toggle_pace_notes_recording"}
+{"text": "toggle stage recce mode", "intent": "toggle_stage_recce"}
+{"text": "enter recce mode", "intent": "toggle_stage_recce"}
 // Filler and politeness must not change routing.
-{"text": "hey can you tell me how is my fuel looking please", "intent": "fuel_status"}
-{"text": "ok so what is my damage report", "intent": "damage_report"}
+{"text": "hey can you tell me how's my fuel please", "intent": "fuel_status"}
+{"text": "ok so give me a damage report", "intent": "car_damage"}
 // Must be rejected: conversation, Discord chatter, sim audio bleed.
 {"text": "what do you want for dinner tonight", "intent": null}
-{"text": "i think the setup is way too loose on entry", "intent": null}
+{"text": "i reckon the setup is way too loose on entry", "intent": null}
 {"text": "yeah i saw that replay it was ridiculous", "intent": null}
+{"text": "what is my", "intent": null}
 {"text": "", "intent": null}

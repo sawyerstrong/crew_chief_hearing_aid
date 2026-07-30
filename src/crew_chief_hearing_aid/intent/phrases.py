@@ -126,19 +126,32 @@ class Intent:
 
     `action` is the CrewChief action label as it appears in Add/Remove Actions;
     it is documentation for the human doing the key binding, not something the
-    code sends. The wire format is whatever `output.key` is bound to.
+    code sends. The wire format is whatever `key` is bound to.
+
+    `description` is written for a tool-calling model and states *when to call
+    this*, not merely what it does -- prescriptive descriptions measurably
+    improve triggering. `sre_key` names the entry in CrewChief's
+    speech_recognition_config.txt that `phrases` was imported from, or is empty
+    for actions CrewChief exposes as a button but has no voice command for.
     """
 
     id: str
     action: str
     key: str
     phrases: tuple[str, ...] = field(default_factory=tuple)
+    description: str = ""
+    sre_key: str = ""
 
     def __post_init__(self) -> None:
         if not self.phrases:
             raise ValueError(f"intent {self.id!r} has no phrases")
         if not self.key:
             raise ValueError(f"intent {self.id!r} has no output key")
+        if not self.description:
+            raise ValueError(
+                f"intent {self.id!r} has no description — the LLM tier needs one "
+                f"to know when to call it"
+            )
 
 
 def parse_crewchief_config(
