@@ -274,7 +274,9 @@ def cmd_setup(args) -> int:
         args.delay = 3
         print("Open CrewChief now, but do NOT press Start — it greys out Assign")
         print("while a session is running. The main button should read 'Start'.")
-        if _ask("CrewChief open and stopped?", default=True):
+        print("Then select 'Keyboard' in the Available controllers list; Assign")
+        print("listens on whichever device is selected there.")
+        if _ask("CrewChief open, stopped, Keyboard selected?", default=True):
             if cmd_bind_all(args) != 0:
                 # bind-all stops on a failed first capture; nothing downstream
                 # can work until that is fixed, so do not pretend otherwise.
@@ -411,7 +413,10 @@ def cmd_send_key(args) -> int:
     print(f"Action : {label}")
     print("\nCrewChief must be OPEN but STOPPED — Assign is greyed out while a")
     print("session is running (the main button should read 'Start').")
-    print("Then: select the action, click Assign, and leave the dialog waiting.")
+    print("\nIn CrewChief, in this order:")
+    print("  1. 'Available controllers' list  ->  select Keyboard")
+    print("  2. 'Assigned actions' list       ->  select the action")
+    print("  3. Click Assign — it is now listening")
     for remaining in range(args.delay, 0, -1):
         print(f"  sending in {remaining}... ", end="\r", flush=True)
         time.sleep(1)
@@ -476,9 +481,15 @@ def cmd_bind_all(args) -> int:
     print("CrewChief must be OPEN but STOPPED — it greys out Assign while a")
     print("session is running. The main button should read 'Start', not 'Stop'.")
     print("Bind everything first, then Start it.\n")
-    print("For each action, in CrewChief:")
-    print("  Add/Remove Actions -> add the action -> select it -> click Assign")
-    print("Then press Enter here and the key is injected into the waiting dialog.\n")
+    print("Once, before you begin:")
+    print("  In the 'Available controllers' list, select  ->  Keyboard")
+    print("  Assign binds FROM a device, so it listens on whichever one is")
+    print("  selected. Leave it on Keyboard for the whole run.\n")
+    print("Then for each action:")
+    print("  Add/Remove Actions -> add the action")
+    print("  Select it in the Assigned actions list")
+    print("  Click Assign  (it is now listening)")
+    print("Then press Enter here and the key is injected.\n")
     print("Enter = send, s = skip, q = stop.\n")
 
     done, skipped = 0, 0

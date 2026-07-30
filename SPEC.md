@@ -222,6 +222,12 @@ against the live 4.19.4.0 install rather than inferred:
 2. **CrewChief greys out Assign while a session is running.** It must be open
    but stopped — the main button reading `Start`, not `Stop`. Bind first, then
    start.
+2b. **Assign binds *from a selected device*.** "Keyboard" must be selected in
+   the Available controllers list before clicking Assign, or it listens on the
+   wrong device and captures nothing. This cost a full debugging cycle: an
+   injected key that never appeared looked identical to DirectInput filtering
+   injected input, which would have killed the keypress sink entirely and sent
+   us to a ViGEm virtual-HID driver or the fork. It was a UI-flow step.
 3. **Bindings are not persisted to `user.config`.** A binding made in the UI,
    with CrewChief then closed so it flushed (mtime confirmed to move), still
    left every `*_button_index` at `-1` and every `*_device_type` empty. Where
