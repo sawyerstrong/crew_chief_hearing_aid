@@ -349,11 +349,29 @@ class Pipeline:
                     frame = capture.read(timeout=0.5)
                     if frame is None:
                         continue
+                    was_listening = self.state is State.LISTENING
                     self._handle_frame(frame, capture)
+                    if was_listening and self.state is State.IDLE:
+                        # An utterance just finished. Transcription plus a
+                        # tier-4 round trip can run ~1s, during which the
+                        # callback kept filling the queue with audio that
+                        # belongs to no utterance. Drop it so the backlog does
+                        # not carry into the next press.
+                        discarded = capture.drain()
+                        if discarded:
+                            log.debug("drained %d stale blocks", discarded)
             except KeyboardInterrupt:
                 log.info("interrupted")
             finally:
                 self.ptt.close()
                 self.sink.close()
         log.info("session: %s", self.stats.summary())
+        if capture.dropped_blocks:
+            # Sustained drops mean the consumer is genuinely too slow, not
+            # merely busy between utterances — worth surfacing at the end.
+            log.info(
+                "%d audio blocks dropped while busy (harmless unless you were "
+                "holding push-to-talk at the time)",
+                capture.dropped_blocks,
+            )
         return self.stats

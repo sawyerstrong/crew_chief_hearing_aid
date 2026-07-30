@@ -43,10 +43,32 @@ class AudioCapture:
     def __init__(self, device: InputDevice, config: CaptureConfig) -> None:
         self.device = device
         self.config = config
-        self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=64)
+        self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=128)
         self._preroll: deque[np.ndarray] = deque(maxlen=config.preroll_blocks)
         self._stream = None
         self._lock = threading.Lock()
+        self._dropped = 0
+
+    @property
+    def dropped_blocks(self) -> int:
+        return self._dropped
+
+    def drain(self) -> int:
+        """Discard queued audio and return how much was thrown away.
+
+        Called after an utterance is dispatched. Audio captured *while* we were
+        transcribing and routing belongs to no utterance — under push-to-talk
+        the button was already released — so replaying it would only feed stale
+        blocks into the next capture.
+        """
+        discarded = 0
+        try:
+            while True:
+                self._queue.get_nowait()
+                discarded += 1
+        except queue.Empty:
+            pass
+        return discarded
 
     def _callback(self, indata, frames, time_info, status) -> None:
         if status:
@@ -59,7 +81,15 @@ class AudioCapture:
         try:
             self._queue.put_nowait(block)
         except queue.Full:
-            log.warning("capture queue full; dropping block")
+            # Expected while an utterance is being processed: transcription and
+            # a tier-4 round trip can take ~1s, during which nothing drains and
+            # the callback keeps producing. The pre-roll ring buffer is
+            # unaffected, so the next utterance still gets its lead-in.
+            # Logged at debug because the pipeline drains after each utterance
+            # (see Pipeline._finish_utterance) — a *sustained* run of these
+            # means the consumer is genuinely too slow, not merely busy.
+            self._dropped += 1
+            log.debug("capture queue full; dropping block (%d total)", self._dropped)
 
     def start(self) -> None:
         import sounddevice as sd

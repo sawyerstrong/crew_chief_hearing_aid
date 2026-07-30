@@ -26,8 +26,17 @@ def setup_logging(level: str = "INFO") -> None:
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
-    # openWakeWord and faster-whisper are chatty at INFO.
-    for noisy in ("openwakeword", "faster_whisper", "urllib3"):
+    # These log one line per operation at INFO, which in a voice loop means one
+    # line per utterance drowning the routing decisions you actually want to
+    # read. httpx in particular logs every Anthropic request.
+    for noisy in (
+        "openwakeword",
+        "faster_whisper",
+        "urllib3",
+        "httpx",
+        "httpcore",
+        "anthropic",
+    ):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
