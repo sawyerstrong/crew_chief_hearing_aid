@@ -16,6 +16,7 @@ critical path at all.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass
 
@@ -37,6 +38,9 @@ class JoystickButton:
 
 
 def _require_pygame():
+    # pygame prints a support banner to stdout on import, which would corrupt
+    # the output of `setup-ptt` and `bindings`. Must be set before the import.
+    os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
     try:
         import pygame
     except ImportError as exc:  # pragma: no cover - environment dependent
@@ -47,8 +51,16 @@ def _require_pygame():
 
 
 def _init(pygame) -> None:
-    # Only the joystick subsystem. pygame.init() would also bring up video and
-    # audio, which on Windows can steal focus and open a window.
+    # SDL routes joystick state through the event queue, so `event.pump()` --
+    # and therefore `get_button()` ever changing -- requires the video
+    # subsystem. Initialising it normally would open a window and steal focus
+    # from the sim, so use the dummy driver: a real event queue, no window.
+    #
+    # Learned by running it: joystick.init() alone raises
+    # "video system not initialized" on the first pump().
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    if not pygame.display.get_init():
+        pygame.display.init()
     pygame.joystick.quit()
     pygame.joystick.init()
 
