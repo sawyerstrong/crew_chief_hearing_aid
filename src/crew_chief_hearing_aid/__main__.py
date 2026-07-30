@@ -497,8 +497,12 @@ def cmd_bind_all(args) -> int:
         key = normalize_key(intent.key)
         print(f"[{n}/{len(intents)}] {intent.action}")
         print(f"          -> {key}")
+        # The Enter that answers this prompt must land BEFORE Assign is armed.
+        # CrewChief's Assign listens globally, so any physical key pressed while
+        # it waits gets bound -- answering a prompt mid-capture binds Enter, and
+        # that is indistinguishable from a successful injection.
         try:
-            answer = input("          Assign dialog waiting? [Enter/s/q] ").strip().lower()
+            answer = input("          Ready? [Enter/s/q] ").strip().lower()
         except EOFError:
             answer = "q"
         if answer.startswith("q"):
@@ -509,10 +513,11 @@ def cmd_bind_all(args) -> int:
             print()
             continue
 
+        print("          NOW: click Assign in CrewChief. Do not touch the keyboard.")
         for remaining in range(args.delay, 0, -1):
-            print(f"          sending in {remaining}... ", end="\r", flush=True)
+            print(f"          sending in {remaining}...  ", end="\r", flush=True)
             time.sleep(1)
-        print(" " * 44, end="\r")
+        print(" " * 52, end="\r")
         sink.fire(intent)
         print(f"          sent {key}")
         done += 1
@@ -696,13 +701,14 @@ def build_parser() -> argparse.ArgumentParser:
         "send-key", help="inject a key into CrewChief's waiting Assign dialog"
     )
     sendkey.add_argument("key", help="intent id, or a raw key like F13 / ctrl+F14")
-    sendkey.add_argument("--delay", type=int, default=4)
+    sendkey.add_argument("--delay", type=int, default=10)
     sendkey.set_defaults(func=cmd_send_key)
 
     bindall = sub.add_parser(
         "bind-all", help="walk every action, injecting its key as you click Assign"
     )
-    bindall.add_argument("--delay", type=int, default=3)
+    # Long enough to switch windows and click Assign with the mouse only.
+    bindall.add_argument("--delay", type=int, default=8)
     bindall.add_argument("--only", nargs="*", help="restrict to these intent ids")
     bindall.set_defaults(func=cmd_bind_all)
 
