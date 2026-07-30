@@ -42,6 +42,8 @@ dev = [
 
 [project.scripts]
 crew_chief_hearing_aid = "crew_chief_hearing_aid.__main__:main"
+# Short alias. The full name is a mouthful to type before every subcommand.
+cchear = "crew_chief_hearing_aid.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
