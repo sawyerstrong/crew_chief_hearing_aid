@@ -25,10 +25,30 @@ def user_config(tmp_path, monkeypatch):
 
 
 class TestEnsure:
-    def test_creates_from_shipped_defaults(self, user_config):
+    def test_creates_a_thin_override_not_a_copy(self, user_config):
+        import tomllib
+
         path = ensure_user_config()
         assert path.exists()
-        assert "[[intents]]" in path.read_text(encoding="utf-8")
+        # Parse rather than substring-match: the template *mentions*
+        # [[intents]] in a comment explaining how to override them.
+        with path.open("rb") as fh:
+            doc = tomllib.load(fh)
+        assert set(doc) == {"audio", "ptt", "llm"}
+        assert "intents" not in doc
+
+    def test_shadow_detection(self, user_config):
+        from crew_chief_hearing_aid.userconfig import shadows_shipped_intents
+
+        ensure_user_config()
+        assert not shadows_shipped_intents(user_config)
+        user_config.write_text(
+            user_config.read_text(encoding="utf-8")
+            + '\n[[intents]]\nid = "x"\naction = "a"\nkey = "NUMPAD1"\n'
+            'description = "d"\nphrases = ["p"]\n',
+            encoding="utf-8",
+        )
+        assert shadows_shipped_intents(user_config)
 
     def test_is_idempotent_and_does_not_clobber(self, user_config):
         ensure_user_config()
@@ -50,14 +70,32 @@ class TestSetValues:
     def test_preserves_comments(self, user_config):
         set_values({"ptt": {"button_index": 4}})
         text = user_config.read_text(encoding="utf-8")
-        assert "# Push-to-talk on a wheel button" in text
-        assert "# Ignore taps shorter than this" in text
+        assert "# Filled in by" in text
+        assert "MERGED OVER" in text
 
-    def test_preserves_unrelated_sections(self, user_config):
+    def test_does_not_copy_the_shipped_defaults(self, user_config):
+        """The user config must stay a thin override.
+
+        Copying the defaults freezes the action list and key map at install
+        time — a later change to the shipped config would be silently shadowed
+        forever. This bit once already: a stale copy kept serving the old
+        F13-F24 map after the shipped default moved to the numpad.
+        """
+        import tomllib
+
         set_values({"ptt": {"button_index": 4}})
-        text = user_config.read_text(encoding="utf-8")
-        assert 'model = "tiny.en"' in text
-        assert "[[intents]]" in text
+        with user_config.open("rb") as fh:
+            doc = tomllib.load(fh)
+        assert "intents" not in doc
+        assert "asr" not in doc
+
+    def test_unset_sections_fall_through_to_defaults(self, user_config):
+        from crew_chief_hearing_aid.config import load_config
+
+        set_values({"ptt": {"button_index": 4}})
+        config = load_config(user_path=user_config)
+        assert config.get("asr", "model") == "tiny.en"
+        assert config.intents  # from the shipped defaults, not the override
 
     def test_creates_the_file_if_absent(self, user_config):
         assert not user_config.exists()
@@ -78,7 +116,9 @@ class TestSetValues:
         config = load_config(user_path=user_config)
         assert config.get("ptt", "device_guid") == "guid"
         assert config.get("audio", "input_device") == "USB PnP"
-        assert len(config.intents) == 27
+        # 14 numpad keys — CrewChief has no F13-F24 mapping and no modifier
+        # support, so one action per recognised single key is the ceiling.
+        assert len(config.intents) == 14
 
 
 class TestDescribeChanges:

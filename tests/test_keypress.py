@@ -35,11 +35,27 @@ class TestStructLayout:
 
 
 class TestKeyTables:
-    def test_f13_to_f24_all_have_scan_and_virtual_codes(self):
-        for i in range(13, 25):
-            key = f"F{i}"
+    def test_every_numpad_key_has_both_encodings(self):
+        for i in range(10):
+            key = f"NUMPAD{i}"
             assert key in kp.SCAN_CODES, f"{key} missing a scan code"
             assert key in kp.VIRTUAL_KEYS, f"{key} missing a virtual key"
+        for key in ("NUMPADMULTIPLY", "NUMPADSUBTRACT", "NUMPADADD", "NUMPADDECIMAL"):
+            assert key in kp.SCAN_CODES and key in kp.VIRTUAL_KEYS
+
+    def test_extended_flag_keys_are_excluded(self):
+        """NumpadEnter shares scan code 0x1C with Return and is distinguished
+        only by the extended flag; NumpadDivide needs it too. Neither is worth
+        the ambiguity for one extra slot."""
+        assert "NUMPADENTER" not in kp.SCAN_CODES
+        assert "NUMPADDIVIDE" not in kp.SCAN_CODES
+
+    def test_f13_to_f24_are_gone(self):
+        """CrewChief has no mapping for them — verified by injecting F12
+        (binds) and F13 (does not). Keeping them would offer keys that look
+        configurable and silently never bind."""
+        for i in range(13, 25):
+            assert f"F{i}" not in kp.SCAN_CODES
 
     def test_modifiers_have_both_encodings(self):
         assert set(kp.MODIFIER_SCAN) == set(kp.MODIFIER_VK)
@@ -85,3 +101,15 @@ class TestPreflight:
 
         bad = Intent(id="x", action="a", key="F99", phrases=("p",), description="d")
         assert kp.KeypressSink().preflight([bad])
+
+    def test_rejects_modifier_combos(self):
+        """CrewChief stores action + deviceGuid + buttonIndex with no modifier
+        field, so a combo can be sent but never bound — a config that looks
+        right and silently never fires."""
+        from crew_chief_hearing_aid.intent.phrases import Intent
+
+        combo = Intent(
+            id="x", action="a", key="ctrl+NUMPAD1", phrases=("p",), description="d"
+        )
+        problems = kp.KeypressSink().preflight([combo])
+        assert problems and "modifier" in problems[0]

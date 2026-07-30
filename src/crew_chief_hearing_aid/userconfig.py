@@ -12,11 +12,10 @@ is never mutated.
 from __future__ import annotations
 
 import logging
-import shutil
 from pathlib import Path
 from typing import Any
 
-from .config import default_config_path, user_config_path
+from .config import user_config_path
 
 log = logging.getLogger(__name__)
 
@@ -35,14 +34,61 @@ def _require_tomlkit():
     return tomlkit
 
 
+USER_TEMPLATE = """# crew_chief_hearing_aid — per-machine settings.
+#
+# This file is MERGED OVER the shipped config.default.toml, so it only needs
+# what differs on this machine. Anything absent here falls through to the
+# defaults and picks up future changes automatically.
+#
+# Deliberately NOT a copy of the defaults: copying them freezes the action list
+# and key map at install time, so a later change to the shipped config would be
+# silently shadowed by this file forever.
+#
+# To override the action list, paste [[intents]] blocks here — but note that
+# doing so opts you out of updates to them.
+
+[audio]
+# Substring match against `crew_chief_hearing_aid devices`. Never an index.
+input_device = ""
+
+[ptt]
+# Filled in by `crew_chief_hearing_aid setup-ptt`.
+enabled = true
+device_guid = ""
+button_index = -1
+
+[llm]
+# Tier 4 needs ANTHROPIC_API_KEY in the environment. Never put a key in here.
+enabled = true
+"""
+
+
 def ensure_user_config(path: Path | None = None) -> Path:
-    """Create the user config from the shipped defaults if it is missing."""
+    """Create a minimal per-machine override if it is missing.
+
+    Writes only machine-specific keys, not a copy of the defaults — see
+    USER_TEMPLATE for why.
+    """
     target = path or user_config_path()
     if not target.exists():
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(default_config_path(), target)
+        target.write_text(USER_TEMPLATE, encoding="utf-8")
         log.info("created %s", target)
     return target
+
+
+def shadows_shipped_intents(path: Path | None = None) -> bool:
+    """True if the user config pins its own [[intents]], freezing the key map."""
+    target = path or user_config_path()
+    if not target.exists():
+        return False
+    try:
+        import tomllib
+
+        with target.open("rb") as fh:
+            return bool(tomllib.load(fh).get("intents"))
+    except Exception:  # noqa: BLE001 - advisory only
+        return False
 
 
 def set_values(updates: dict[str, dict[str, Any]], path: Path | None = None) -> Path:

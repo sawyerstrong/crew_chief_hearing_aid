@@ -95,25 +95,35 @@ level = "INFO"
 
 # --- Actions -----------------------------------------------------------
 #
-# 27 entries: every action in CrewChief's Add/Remove Actions dialog except
-# "Talk to Crew Chief", which is CrewChief's own push-to-talk and irrelevant
-# here since we bypass its recogniser entirely.
+# 14 actions on the numpad.
 #
-# `action`      — the label in Add/Remove Actions. Bind it to `key` there.
-# `description` — written for the LLM tier; says WHEN to call, not just what.
-# `sre_key`     — entry in CrewChief's speech_recognition_config.txt to import
-#                 phrases from. Absent for actions CrewChief exposes as a button
-#                 but has no voice command for; those carry explicit `phrases`.
+# The original scheme used F13-F24: no hardware emits them, so nothing could
+# ever collide with a sim or Windows binding. But CrewChief has no mapping for
+# them -- verified by injecting F12 (binds) and F13 (does not). Nor does it
+# support modifier combos: a binding is action + deviceGuid + buttonIndex, with
+# no modifier field, so ctrl+KEY can be sent but never bound.
 #
-# F13–F24 have no physical keys, so nothing else on the system can ever emit
-# them. 27 actions need more than 12, hence the Ctrl/Shift combos.
-
-# ---- Race-critical: plain F13–F24 ----
+# Together that caps us at one action per single key CrewChief recognises. The
+# numpad is the best available block: mapped by CrewChief, and usually
+# untouched on a rig with a wheel and button box. NumpadEnter and NumpadDivide
+# are excluded -- both need the extended flag, and NumpadEnter shares scan code
+# 0x1C with Return.
+#
+# Laid out to match the physical grid, so the muscle memory is spatial:
+#
+#     [7] car ahead    [8] session     [9] full status
+#     [4] fuel         [5] damage      [6] car status
+#     [1] car behind   [2] spotter     [3] pit prediction
+#     [0] repeat                       [.] mute
+#     [*] yellows      [-] corners     [+] race updates
+#
+# Dropped for lack of keys (13): add_track_landmark, print_track_data, reset_vr_view, toggle_cut_track_warnings, toggle_hard_part_messages, toggle_manual_formation_lap, toggle_opponent_deltas, toggle_pace_notes_playback, toggle_pace_notes_recording, toggle_stage_recce, toggle_track_landmark_recording, volume_down, volume_up
+# These stay reachable once the named-pipe fork lands, which has no key limit.
 
 [[intents]]
 id = "car_ahead_last_lap"
 action = "What's the car ahead's last lap time"
-key = "F13"
+key = "NUMPAD7"
 description = "Report the last lap time set by the car directly ahead on track. Call this when the driver asks how fast the car in front is going or what it is lapping."
 phrases = [
   "what is the car ahead's last lap time",
@@ -126,7 +136,7 @@ phrases = [
 [[intents]]
 id = "car_behind_last_lap"
 action = "What's the car behind's last lap time"
-key = "F14"
+key = "NUMPAD1"
 description = "Report the last lap time set by the car directly behind on track. Call this when the driver asks how fast the car behind is going or whether it is catching up."
 phrases = [
   "what is the car behind's last lap time",
@@ -138,42 +148,42 @@ phrases = [
 [[intents]]
 id = "fuel_status"
 action = "Report fuel/battery status"
-key = "F15"
+key = "NUMPAD4"
 sre_key = "HOWS_MY_FUEL"
 description = "Report remaining fuel or battery and how many laps it covers. Call this for any question about fuel level, fuel usage, or whether the driver can make the end of the race."
 
 [[intents]]
 id = "car_damage"
 action = "Report car damage"
-key = "F16"
+key = "NUMPAD5"
 sre_key = "DAMAGE_REPORT"
 description = "Report current car damage. Call this after contact, or when the driver asks whether the car is hurt, broken, or still okay."
 
 [[intents]]
 id = "car_status"
 action = "Report car status and damage"
-key = "F17"
+key = "NUMPAD6"
 sre_key = "CAR_STATUS"
 description = "Report combined car condition — tyres, brakes, engine, and damage. Call this for a general 'how is the car' question rather than a damage-specific one."
 
 [[intents]]
 id = "session_status"
 action = "Report session status"
-key = "F18"
+key = "NUMPAD8"
 sre_key = "SESSION_STATUS"
 description = "Report session position, laps or time remaining, and flags. Call this when the driver asks where they are in the race or how much is left."
 
 [[intents]]
 id = "full_status"
 action = "Report car, damage and session status"
-key = "F19"
+key = "NUMPAD9"
 sre_key = "STATUS"
 description = "Full combined update: car, damage, and session. Call this when the driver asks for everything at once, or a general 'how am I doing'."
 
 [[intents]]
 id = "pit_prediction"
 action = "Pit stop prediction"
-key = "F20"
+key = "NUMPAD3"
 description = "Predict what track position the driver would rejoin in after pitting now. Call this when the driver is weighing whether to box."
 phrases = [
   "what is the pit prediction",
@@ -185,21 +195,21 @@ phrases = [
 [[intents]]
 id = "repeat_last_message"
 action = "Press to replay the last message"
-key = "F21"
+key = "NUMPAD0"
 sre_key = "REPEAT_LAST_MESSAGE"
 description = "Replay the last thing the crew chief said. Call this when the driver missed a message or asks for it again."
 
 [[intents]]
 id = "toggle_mute"
 action = "Toggle mute"
-key = "F22"
+key = "NUMPADDECIMAL"
 sre_key = "KEEP_QUIET"
 description = "Mute or unmute the crew chief. Call this when the driver wants silence to concentrate, or wants the chief talking again."
 
 [[intents]]
 id = "toggle_spotter"
 action = "Toggle Spotter on/off"
-key = "F23"
+key = "NUMPAD2"
 description = "Turn the spotter's car-alongside calls on or off. Call this when the driver mentions the spotter specifically."
 phrases = [
   "turn the spotter off",
@@ -211,7 +221,7 @@ phrases = [
 [[intents]]
 id = "toggle_race_updates"
 action = "Toggle race updates on/off"
-key = "F24"
+key = "NUMPADADD"
 description = "Turn periodic race position and gap updates on or off. Call this when the driver wants fewer or more routine updates, without muting entirely."
 phrases = [
   "turn race updates off",
@@ -225,147 +235,13 @@ phrases = [
 [[intents]]
 id = "corner_names"
 action = "Read corner names for current lap"
-key = "ctrl+F13"
+key = "NUMPADSUBTRACT"
 sre_key = "PLAY_CORNER_NAMES"
 description = "Read out the names of the corners on this track. Call this when the driver asks what a corner is called or wants the lap talked through."
 
 [[intents]]
 id = "toggle_yellow_flags"
 action = "Toggle yellow flag messages"
-key = "ctrl+F14"
+key = "NUMPADMULTIPLY"
 sre_key = "ENABLE_YELLOW_FLAG_MESSAGES"
 description = "Turn yellow flag announcements on or off. Call this only when the driver mentions yellows or caution messages specifically."
-
-[[intents]]
-id = "toggle_opponent_deltas"
-action = "Toggle opponent deltas on/off for each lap"
-key = "ctrl+F15"
-description = "Turn per-lap delta calls for nearby cars on or off. Call this when the driver asks about deltas to other cars specifically."
-phrases = [
-  "toggle opponent deltas",
-  "turn opponent deltas off",
-  "turn opponent deltas on",
-  "stop reading me deltas",
-]
-
-[[intents]]
-id = "toggle_hard_part_messages"
-action = "Toggle delay messages on hard parts"
-key = "ctrl+F16"
-sre_key = "DONT_TALK_IN_THE_CORNERS"
-description = "Stop or resume the chief talking during corners and braking zones. Call this when the driver says not to talk in the hard parts of the lap."
-
-[[intents]]
-id = "toggle_cut_track_warnings"
-action = "Toggle cut track warnings on / off"
-key = "ctrl+F17"
-description = "Turn track-limits warnings on or off. Call this when the driver mentions cutting or track limits."
-phrases = [
-  "toggle cut track warnings",
-  "turn off cut track warnings",
-  "stop warning me about track limits",
-]
-
-[[intents]]
-id = "toggle_manual_formation_lap"
-action = "Toggle manual formation lap mode"
-key = "ctrl+F18"
-sre_key = "ENABLE_MANUAL_FORMATION_LAP"
-description = "Enter or leave manual formation lap mode. Call this at the start of a race with a rolling or formation start."
-
-[[intents]]
-id = "volume_up"
-action = "Increase messages volume"
-key = "ctrl+F19"
-description = "Turn the crew chief's volume up. Call this when the driver says they cannot hear the chief."
-phrases = [
-  "turn the volume up",
-  "i cant hear you",
-  "increase the volume",
-]
-
-[[intents]]
-id = "volume_down"
-action = "Decrease messages volume"
-key = "ctrl+F20"
-description = "Turn the crew chief's volume down. Call this when the driver says the chief is too loud."
-phrases = [
-  "turn the volume down",
-  "youre too loud",
-  "decrease the volume",
-]
-
-[[intents]]
-id = "print_track_data"
-action = "Print track and position info"
-key = "ctrl+F21"
-description = "Dump track and position debug information to the CrewChief console. Diagnostic — call only if the driver explicitly asks for track data or debug info."
-phrases = [
-  "print track data",
-  "print track and position info",
-  "dump track info",
-]
-
-[[intents]]
-id = "add_track_landmark"
-action = "Add Start / end track landmark"
-key = "ctrl+F22"
-description = "Mark the start or end of a named track landmark at the current position. Call this only while the driver is explicitly recording landmarks."
-phrases = [
-  "add a track landmark",
-  "mark this landmark",
-  "set a landmark here",
-]
-
-[[intents]]
-id = "reset_vr_view"
-action = "Reset VR view"
-key = "ctrl+F23"
-description = "Re-centre the VR headset view. Call this when the driver says their view is off-centre or asks to recentre."
-phrases = [
-  "reset my vr view",
-  "recentre the view",
-  "reset the headset view",
-]
-
-[[intents]]
-id = "toggle_track_landmark_recording"
-action = "Start / stop track landmarks recording"
-key = "ctrl+F24"
-description = "Start or stop recording track landmarks. Call this only when the driver is explicitly building a landmark set."
-phrases = [
-  "start recording track landmarks",
-  "stop recording track landmarks",
-  "toggle landmark recording",
-]
-
-# ---- Rally: Shift+F13–F15 ----
-
-[[intents]]
-id = "toggle_pace_notes_playback"
-action = "Start / stop playing pace notes"
-key = "shift+F13"
-sre_key = "START_PACE_NOTES_PLAYBACK"
-description = "Start or stop pace note playback. Rally only — call this when the driver asks for pace notes to be read."
-
-[[intents]]
-id = "toggle_pace_notes_recording"
-action = "Start / stop recording pace notes"
-key = "shift+F14"
-description = "Start or stop recording pace notes. Rally only — call this when the driver is dictating notes on a recce run."
-phrases = [
-  "start recording pace notes",
-  "stop recording pace notes",
-  "toggle pace note recording",
-]
-
-[[intents]]
-id = "toggle_stage_recce"
-action = "Toggle stage recce mode (rally only)"
-key = "shift+F15"
-description = "Enter or leave stage reconnaissance mode. Rally only."
-phrases = [
-  "toggle stage recce mode",
-  "start stage recce",
-  "enter recce mode",
-]

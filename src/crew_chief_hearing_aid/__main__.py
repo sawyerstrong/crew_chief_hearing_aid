@@ -14,7 +14,7 @@ import os
 import shutil
 import sys
 
-from .config import Config, default_config_path, load_config, user_config_path
+from .config import Config, load_config, user_config_path
 from .intent.phrases import Intent
 from .logging_setup import setup_logging
 
@@ -37,15 +37,22 @@ def cmd_devices(args) -> int:
 
 
 def cmd_init_config(args) -> int:
+    from .userconfig import ensure_user_config
+
     target = user_config_path()
     if target.exists() and not args.force:
         print(f"{target} already exists (use --force to overwrite)")
         return 1
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(default_config_path(), target)
+    if args.force and target.exists():
+        backup = target.with_suffix(".toml.bak")
+        shutil.copyfile(target, backup)
+        print(f"Backed up existing config to {backup}")
+        target.unlink()
+    ensure_user_config(target)
     print(f"Wrote {target}")
-    print("Edit audio.input_device and the [[intents]] keys, then run:")
-    print("  crew_chief_hearing_aid doctor")
+    print("It holds only per-machine settings and is merged over the shipped")
+    print("defaults, so future changes to the action list reach you automatically.")
+    print("\nNext: crew_chief_hearing_aid setup")
     return 0
 
 
@@ -59,6 +66,13 @@ def cmd_doctor(args) -> int:
     for path in config.source_paths:
         print(f"  loaded {path}")
     print(f"  {len(config.intents)} intents defined")
+    from .userconfig import shadows_shipped_intents
+
+    if shadows_shipped_intents():
+        print("  ! your user config pins its own [[intents]], so it shadows the")
+        print("    shipped action list and key map — updates will not reach you.")
+        print("    Remove them unless the override is deliberate.")
+        problems += 1
     if len(config.source_paths) == 1:
         print(
             "  ! no user config; run `crew_chief_hearing_aid init-config` "
@@ -301,8 +315,13 @@ def cmd_bindings(args) -> int:
     width = max(len(i.action) for i in config.intents)
     for intent in config.intents:
         print(f"  {intent.action:<{width}}  ->  {intent.key}")
-    print(f"\n{len(config.intents)} actions.")
-    print("F13-F24 have no physical keys, so nothing else can ever emit them.")
+    print(f"\n{len(config.intents)} actions, laid out to match the numpad grid:")
+    print("    [7] car ahead    [8] session     [9] full status")
+    print("    [4] fuel         [5] damage      [6] car status")
+    print("    [1] car behind   [2] spotter     [3] pit prediction")
+    print("    [0] repeat                       [.] mute")
+    print("    [*] yellows      [-] corners     [+] race updates")
+    print("\nSelect 'Keyboard' in Available controllers before clicking Assign.")
     return 0
 
 

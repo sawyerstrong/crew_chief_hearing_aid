@@ -22,18 +22,47 @@ log = logging.getLogger(__name__)
 
 # Set-1 scan codes. F13-F24 are not reliably derivable via MapVirtualKey on all
 # keyboard layouts, so they are tabulated explicitly.
+# Numpad is the working keyspace. F13-F24 were the original choice — no
+# hardware emits them, so nothing could collide — but CrewChief has no mapping
+# for them: injection is received (F12 binds) and F13 is simply not recognised.
+#
+# The numpad is the next-best thing: CrewChief maps it, and on a sim rig with a
+# wheel and button box it is usually untouched. Extended-flag keys (NumpadEnter,
+# NumpadDivide) are excluded — NumpadEnter shares scan code 0x1C with Return and
+# is distinguished only by the extended flag, which is more risk than the extra
+# slot is worth.
 SCAN_CODES: dict[str, int] = {
-    "F13": 0x64, "F14": 0x65, "F15": 0x66, "F16": 0x67,
-    "F17": 0x68, "F18": 0x69, "F19": 0x6A, "F20": 0x6B,
-    "F21": 0x6C, "F22": 0x6D, "F23": 0x6E, "F24": 0x76,
+    "NUMPAD0": 0x52, "NUMPAD1": 0x4F, "NUMPAD2": 0x50, "NUMPAD3": 0x51,
+    "NUMPAD4": 0x4B, "NUMPAD5": 0x4C, "NUMPAD6": 0x4D, "NUMPAD7": 0x47,
+    "NUMPAD8": 0x48, "NUMPAD9": 0x49,
+    "NUMPADMULTIPLY": 0x37, "NUMPADSUBTRACT": 0x4A,
+    "NUMPADADD": 0x4E, "NUMPADDECIMAL": 0x53,
+    # Kept for diagnostics (send-key F12 is how the range was tested) and in
+    # case a rig has spare F-keys. Not used by the shipped config: iRacing
+    # claims most of them.
     "F1": 0x3B, "F2": 0x3C, "F3": 0x3D, "F4": 0x3E,
     "F5": 0x3F, "F6": 0x40, "F7": 0x41, "F8": 0x42,
     "F9": 0x43, "F10": 0x44, "F11": 0x57, "F12": 0x58,
 }
 
 VIRTUAL_KEYS: dict[str, int] = {
-    **{f"F{i}": 0x70 + (i - 1) for i in range(1, 13)},   # VK_F1..VK_F12
-    **{f"F{i}": 0x7C + (i - 13) for i in range(13, 25)},  # VK_F13..VK_F24
+    **{f"NUMPAD{i}": 0x60 + i for i in range(10)},  # VK_NUMPAD0..9
+    "NUMPADMULTIPLY": 0x6A,
+    "NUMPADADD": 0x6B,
+    "NUMPADSUBTRACT": 0x6D,
+    "NUMPADDECIMAL": 0x6E,
+    **{f"F{i}": 0x70 + (i - 1) for i in range(1, 13)},  # VK_F1..VK_F12
+}
+
+# Friendlier spellings accepted in config.
+_KEY_ALIASES = {
+    **{f"NUM{i}": f"NUMPAD{i}" for i in range(10)},
+    "NUMPADSTAR": "NUMPADMULTIPLY",
+    "NUMPADMUL": "NUMPADMULTIPLY",
+    "NUMPADPLUS": "NUMPADADD",
+    "NUMPADMINUS": "NUMPADSUBTRACT",
+    "NUMPADDOT": "NUMPADDECIMAL",
+    "NUMPADPERIOD": "NUMPADDECIMAL",
 }
 
 # CrewChief exposes more bindable actions (25+) than there are F13-F24 keys (12),
@@ -56,10 +85,13 @@ def parse_key(spec: str) -> tuple[tuple[str, ...], str]:
     are the same binding — otherwise the duplicate-key check in config loading
     would miss a genuine collision.
     """
+    # Split on the LAST '+' only: numpad key names contain no '+', but
+    # "NUMPADADD" spelled as "numpad+" would otherwise split wrongly.
     parts = [p.strip().lower() for p in spec.split("+") if p.strip()]
     if not parts:
         raise ValueError(f"empty key spec {spec!r}")
     key = parts[-1].upper()
+    key = _KEY_ALIASES.get(key, key)
     mods: list[str] = []
     for raw in parts[:-1]:
         mod = _MODIFIER_ALIASES.get(raw, raw)
@@ -181,9 +213,19 @@ class KeypressSink:
         problems: list[str] = []
         for intent in intents:
             try:
-                _mods, key = parse_key(intent.key)
+                mods, key = parse_key(intent.key)
             except ValueError as exc:
                 problems.append(f"intent {intent.id!r}: {exc}")
+                continue
+            if mods:
+                # CrewChief stores a binding as action + deviceGuid +
+                # buttonIndex. There is no modifier field, so a combo can be
+                # sent but never bound — it would look like a working config
+                # that silently never fires.
+                problems.append(
+                    f"intent {intent.id!r}: CrewChief cannot bind modifier combos "
+                    f"({intent.key!r}); use a single key"
+                )
                 continue
             if self.send_scancode and key not in SCAN_CODES:
                 problems.append(f"intent {intent.id!r}: no scan code known for key {key!r}")
