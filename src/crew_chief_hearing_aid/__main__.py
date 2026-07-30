@@ -74,10 +74,13 @@ def cmd_doctor(args) -> int:
         print(f"  settings: {user_config}")
         settings = crewchief.read_settings(user_config)
         report = crewchief.binding_report(settings)
-        print(f"  bound actions: {len(report.bound)}, unbound: {len(report.unbound)}")
-        if not report.any_bound:
-            print("  ! nothing is bound yet — bind your intent keys in Add/Remove Actions")
-            problems += 1
+        print(f"  {len(report.bound) + len(report.unbound)} bindable actions known")
+        # Deliberately NOT reported as bound/unbound. Measured on a live
+        # 4.19.4.0 install: a binding made in the UI and flushed on exit still
+        # leaves every *_button_index at -1, so this file does not hold binding
+        # state. Claiming otherwise sent me chasing a phantom once already.
+        print("  note: binding state is not stored in user.config — check")
+        print("        CrewChief's Add/Remove Actions dialog to confirm")
         for note in crewchief.recognition_health(settings):
             print(f"  note: {note}")
 

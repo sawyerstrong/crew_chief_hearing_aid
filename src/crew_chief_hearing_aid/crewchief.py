@@ -84,12 +84,19 @@ class BindingReport:
 
 
 def binding_report(settings: dict[str, str] | None = None) -> BindingReport:
-    """Which CrewChief actions currently have a controller/key assigned.
+    """Which actions have a `*_button_index` set in user.config.
 
-    An index of -1 with an empty device guid means unassigned. The action-name
-    to setting-name mapping is not fully documented, so this reports every
-    `*_button_index` setting it finds rather than guessing at a lookup table —
-    read it alongside CrewChief's Add/Remove Actions dialog.
+    ⚠ **This does not tell you what is actually bound.** Measured against a live
+    4.19.4.0 install: a binding made in the UI and confirmed present after
+    CrewChief exited and rewrote user.config still left every
+    `*_button_index` at -1 and every `*_device_type` empty. CrewChief persists
+    controller bindings somewhere else — `current_settings_profile` points at a
+    `defaultSettings.json` that is not in the sound-pack directory, and the
+    install directory is not discoverable via Start Menu, ClickOnce cache, or
+    the uninstall registry.
+
+    So treat a report of "0 bound" as "unknown", not "nothing is bound". The
+    only reliable check is CrewChief's own Add/Remove Actions dialog.
     """
     settings = settings if settings is not None else read_settings()
     bound: dict[str, str] = {}
@@ -140,8 +147,7 @@ def recognition_health(settings: dict[str, str] | None = None) -> list[str]:
             "Alternative voice commands are enabled, so short aliases like 'lap time' "
             "can capture longer sentences and fire the wrong command at high confidence."
         )
-    if settings.get("CHANNEL_OPEN_FUNCTION_button_index", "-1") == "-1" and not settings.get(
-        "CHANNEL_OPEN_FUNCTION_device_guid", ""
-    ).strip():
-        notes.append("CrewChief push-to-talk button is unassigned.")
+    # Deliberately no push-to-talk check here: CHANNEL_OPEN_FUNCTION_button_index
+    # reads -1 even when the button IS bound, so the check only ever produced a
+    # false alarm. See binding_report's docstring.
     return notes
