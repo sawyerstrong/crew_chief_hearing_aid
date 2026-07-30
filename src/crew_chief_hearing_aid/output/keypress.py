@@ -94,8 +94,33 @@ class _KEYBDINPUT(ctypes.Structure):
     ]
 
 
+class _MOUSEINPUT(ctypes.Structure):
+    """Never used — but its size defines the union's size, and therefore
+    sizeof(INPUT). SendInput validates cbSize against its own sizeof(INPUT) and
+    silently returns 0 on a mismatch, so omitting this member makes every call
+    fail with no diagnostic. MOUSEINPUT is the largest member (32 bytes on x64
+    vs KEYBDINPUT's 24)."""
+
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class _HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
+    ]
+
+
 class _INPUTUNION(ctypes.Union):
-    _fields_ = [("ki", _KEYBDINPUT)]
+    _fields_ = [("mi", _MOUSEINPUT), ("ki", _KEYBDINPUT), ("hi", _HARDWAREINPUT)]
 
 
 class _INPUT(ctypes.Structure):
@@ -103,12 +128,34 @@ class _INPUT(ctypes.Structure):
     _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
 
 
+# use_last_error=True is required for get_last_error() to return anything.
+# Without it every failure reports GetLastError=0, which is how a hard
+# structure-size bug looked like a benign no-op.
+_user32 = ctypes.WinDLL("user32", use_last_error=True)
+_user32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_int)
+_user32.SendInput.restype = wintypes.UINT
+
+
 def _send(inputs: list[_INPUT]) -> int:
     arr = (_INPUT * len(inputs))(*inputs)
-    sent = ctypes.windll.user32.SendInput(len(inputs), arr, ctypes.sizeof(_INPUT))
+    sent = _user32.SendInput(len(inputs), arr, ctypes.sizeof(_INPUT))
     if sent != len(inputs):
         err = ctypes.get_last_error()
-        log.error("SendInput delivered %d/%d events (GetLastError=%d)", sent, len(inputs), err)
+        hint = ""
+        if err == 5:
+            hint = (
+                " — access denied: the foreground window belongs to an elevated "
+                "process. Run this as administrator, or run CrewChief unelevated."
+            )
+        elif err == 87:
+            hint = " — invalid parameter: sizeof(INPUT) mismatch"
+        log.error(
+            "SendInput delivered %d/%d events (GetLastError=%d)%s",
+            sent,
+            len(inputs),
+            err,
+            hint,
+        )
     return sent
 
 
