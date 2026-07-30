@@ -194,7 +194,7 @@ def cmd_setup(args) -> int:
     from .audio import list_input_devices
     from .userconfig import UserConfigError, ensure_user_config, set_values
 
-    total = 6
+    total = 5
 
     # --- 1. user config -------------------------------------------------
     _step(1, total, "User config")
@@ -239,40 +239,50 @@ def cmd_setup(args) -> int:
         set_values(updates)
         print("  written")
 
-    # --- 4. bind one action, which also proves the sink ------------------
-    _step(4, total, "Bind one action (this also proves the sink)")
+    # --- 4. bind the actions --------------------------------------------
+    _step(4, total, "Bind actions in CrewChief")
     config = _load(args)
-    probe = config.intents[0]
     print("F13-F24 have no physical keys — that is why nothing else on the system")
     print("can ever emit them, and why CrewChief's Assign dialog cannot capture")
-    print("them from your keyboard. We send the key ourselves instead.\n")
-    print("That is the useful part: it is the same SendInput path used at runtime,")
-    print("so if the bind lands, the sink is proven. One step, both answers.\n")
-    print("  1. Start CrewChief")
-    print("  2. Add/Remove Actions -> add:")
-    print(f"       {probe.action}")
-    print("  3. Select it, click Assign, and leave the dialog waiting")
-    if _ask("\nDialog waiting?", default=False):
-        args.key, args.delay = probe.id, 4
-        cmd_send_key(args)
-        if not _ask("\nDid CrewChief capture the key?", default=False):
-            print("\nStop here. Binding the other 26 will not help — CrewChief is not")
-            print("seeing injected scancodes, so the runtime sink cannot work either.")
-            print("That is the thing to fix; everything else is downstream of it.")
-            return 1
-        print("\n  Confirmed. Binding works, and so does the runtime sink.")
+    print("them from your keyboard. We inject each key instead, through the same")
+    print("SendInput path used at runtime — so a successful bind also proves the")
+    print("runtime sink works.\n")
+    print(f"There are {len(config.intents)} actions. Binding each is three clicks in")
+    print("CrewChief, so doing all of them in one sitting is a real chunk of time.")
+    print("The first 12 (plain F13-F24) are the race-critical ones; the rest are")
+    print("toggles and rally features you can add later.\n")
+    print("  [a] all 27")
+    print("  [c] core 12 only (recommended for a first pass)")
+    print("  [s] skip — bind later with `cchear bind-all`")
+
+    try:
+        choice = input("\nWhich? [a/c/s] ").strip().lower() or "c"
+    except EOFError:
+        choice = "s"
+
+    if choice.startswith("s"):
+        print("\n  Skipped. The action -> key sheet:\n")
+        cmd_bindings(args)
+        print("\nRun `cchear bind-all` when CrewChief is open.")
     else:
-        print("  Skipped — run `send-key` before trusting any of the bindings.")
+        if choice.startswith("c"):
+            args.only = [i.id for i in config.intents if "+" not in i.key]
+            print(f"\n  Binding the {len(args.only)} core actions.\n")
+        else:
+            args.only = None
+            print(f"\n  Binding all {len(config.intents)} actions.\n")
+        args.delay = 3
+        print("Start CrewChief now if it is not already open.")
+        if _ask("CrewChief running?", default=True):
+            if cmd_bind_all(args) != 0:
+                # bind-all stops on a failed first capture; nothing downstream
+                # can work until that is fixed, so do not pretend otherwise.
+                return 1
+        else:
+            print("  Skipped — run `cchear bind-all` once CrewChief is open.")
 
-    # --- 5. the rest of the bindings ------------------------------------
-    _step(5, total, "Bind the remaining actions")
-    print("Same routine for each: add the action, click Assign, then run")
-    print("`cchear send-key <id>` while the dialog waits.\n")
-    cmd_bindings(args)
-    print("\nTip: `cchear bind-all` walks every remaining action in one pass.")
-
-    # --- 6. check -------------------------------------------------------
-    _step(6, total, "Check")
+    # --- 5. check -------------------------------------------------------
+    _step(5, total, "Check")
     cmd_doctor(args)
 
     print("\nWhen doctor is clean:")

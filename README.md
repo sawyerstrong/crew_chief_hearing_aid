@@ -21,33 +21,39 @@ Whisper is an *open* transcriber with no grammar to collapse into. Matching then
 ## Quickstart
 
 ```bash
-git clone <your-fork> && cd crew_chief_hearing_aid
-uv sync --extra runtime          # or: pip install -e ".[runtime,dev]"
+git clone https://github.com/sawyerstrong/crew_chief_hearing_aid
+cd crew_chief_hearing_aid
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
+The installer creates a virtualenv, installs everything, pre-downloads the models, runs the tests, and puts a `cchear` launcher on your PATH. Then:
+
 ```bash
-crew_chief_hearing_aid devices
+cchear setup
 ```
 
-Copy a distinctive substring of your microphone's name — never the index; indices reshuffle across reboots and USB replugs.
+Five steps: user config → pick your microphone → capture a wheel button for push-to-talk → bind actions in CrewChief → health check.
+
+### Why binding works the way it does
+
+F13–F24 have no physical keys. That is exactly why nothing else on your system can ever emit them — and exactly why CrewChief's press-the-key-to-bind dialog cannot capture them from your keyboard.
+
+So setup **injects** each key while CrewChief's Assign dialog is waiting, through the same `SendInput` path used at runtime. A successful bind therefore also proves the runtime sink reaches CrewChief. It checks after the first action and stops if the key was not captured — if injected scancodes do not arrive, nothing downstream can work and binding 26 more will not help.
+
+Setup offers the **core 12** (plain F13–F24, the race-critical ones) as a first pass; the remaining toggles and rally features can be added later with:
 
 ```bash
-crew_chief_hearing_aid init-config
+cchear bind-all
 ```
 
-Edit `%APPDATA%\crew_chief_hearing_aid\config.toml`: set `audio.input_device`, and adjust the `[[intents]]` keys if you want different bindings.
+> **Note:** CrewChief does not persist bindings to `user.config` — verified on a live 4.19.4.0 install, where a binding made in the UI and flushed on exit still left every `*_button_index` at `-1`. `doctor` therefore cannot report what is bound; confirm in CrewChief's own dialog.
 
-Then in CrewChief: **Add/Remove Actions** → bind each intent's `action` to its `key`. F13–F24 are the defaults because no physical keyboard emits them, so nothing else on the system can ever trigger them.
-
-```bash
-crew_chief_hearing_aid doctor
-```
-
-Checks the CrewChief install, reports which actions are still unbound, resolves your microphone, and preflights the output sink. It also flags settings that degrade CrewChief's own recogniser, if you still use it.
+### Running
 
 ```bash
-crew_chief_hearing_aid run --dry-run    # logs intents instead of sending keys
-crew_chief_hearing_aid run              # for real
+cchear doctor          # install, trigger, tier-4, compute placement, sink
+cchear run --dry-run   # logs intents, sends no keys
+cchear run             # for real
 ```
 
 ## Test matching without a microphone
