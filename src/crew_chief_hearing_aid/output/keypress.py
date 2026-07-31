@@ -168,6 +168,40 @@ _user32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_in
 _user32.SendInput.restype = wintypes.UINT
 
 
+VK_NUMLOCK = 0x90
+
+
+def numlock_is_on() -> bool:
+    """Numpad scan codes change meaning with NumLock.
+
+    With it off, 0x4C (NumPad5) is delivered as VK_CLEAR, 0x52 as VK_INSERT,
+    0x4F as VK_END and so on — navigation keys, not digits. Since the entire
+    key map is numpad-based, this is a precondition, not a detail.
+    """
+    return bool(_user32.GetKeyState(VK_NUMLOCK) & 1)
+
+
+def enable_numlock() -> bool:
+    """Turn NumLock on by injecting a keypress. True if it is on afterwards.
+
+    Changes global system state, so this is opt-in via `output.ensure_numlock`
+    rather than done silently. On a dedicated sim rig it is worth it: NumLock
+    drifting off silently disables every binding, and nothing about the failure
+    points at NumLock.
+    """
+    if numlock_is_on():
+        return True
+    scan = 0x45  # NumLock
+    _send([_event(scan=scan, keyup=False, scancode=True)])
+    _send([_event(scan=scan, keyup=True, scancode=True)])
+    on = numlock_is_on()
+    if on:
+        log.info("NumLock was off; turned it on so numpad bindings work")
+    else:
+        log.warning("tried to enable NumLock and it is still off")
+    return on
+
+
 def _send(inputs: list[_INPUT]) -> int:
     arr = (_INPUT * len(inputs))(*inputs)
     sent = _user32.SendInput(len(inputs), arr, ctypes.sizeof(_INPUT))
@@ -202,7 +236,19 @@ def _event(*, scan: int = 0, vk: int = 0, keyup: bool, scancode: bool) -> _INPUT
 
 
 class KeypressSink:
-    def __init__(self, hold_ms: int = 150, *, send_scancode: bool = True, send_vk: bool = True):
+    def __init__(
+        self,
+        hold_ms: int = 150,
+        *,
+        send_scancode: bool = True,
+        send_vk: bool = True,
+        ensure_numlock: bool = True,
+    ):
+        # Defaults to True because the alternative is a silent, unactionable
+        # failure: with NumLock off every numpad binding stops firing, nothing
+        # about the symptom points at NumLock, and a keyboard without a NumLock
+        # key cannot fix it by hand. Injection can.
+        self.ensure_numlock = ensure_numlock
         # CrewChief polls at hold_button_poll_frequency (100ms default), so a
         # hold shorter than roughly 120ms can fall between polls and be missed.
         self.hold_ms = max(hold_ms, 120)
@@ -211,6 +257,16 @@ class KeypressSink:
 
     def preflight(self, intents: list[Intent]) -> list[str]:
         problems: list[str] = []
+        needs_numpad = any(parse_key(i.key)[1].startswith("NUMPAD") for i in intents)
+        if needs_numpad and not numlock_is_on():
+            if self.ensure_numlock and enable_numlock():
+                pass  # fixed; enable_numlock logs it
+            else:
+                problems.append(
+                    "NumLock is OFF — numpad scan codes are delivered as navigation "
+                    "keys (NumPad5 becomes Clear, NumPad0 becomes Insert), so "
+                    "bindings will not fire. Set output.ensure_numlock = true."
+                )
         for intent in intents:
             try:
                 mods, key = parse_key(intent.key)
@@ -236,6 +292,11 @@ class KeypressSink:
         return problems
 
     def fire(self, intent: Intent) -> bool:
+        # Re-checked per fire, not just at preflight: NumLock can be toggled by
+        # anything at any time, and a mid-session flip would otherwise silently
+        # break every subsequent command.
+        if self.ensure_numlock and not numlock_is_on():
+            enable_numlock()
         try:
             mods, key = parse_key(intent.key)
         except ValueError as exc:
