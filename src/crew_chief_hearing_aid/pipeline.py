@@ -21,7 +21,7 @@ import numpy as np
 
 from .asr import WhisperTranscriber
 from .audio import AudioCapture, CaptureConfig, resolve_input_device
-from .audio.ptt import JoystickUnavailable, NullPTT, WheelPTT
+from .audio.ptt import JoystickUnavailable, NullPTT, build_ptt
 from .audio.vad import EnergyVAD, SileroVAD
 from .audio.wakeword import AlwaysOpenDetector, WakeWordDetector
 from .config import Config
@@ -90,16 +90,18 @@ class Pipeline:
         ptt_cfg = config.section("ptt")
         self.ptt_enabled = bool(ptt_cfg.get("enabled", True))
         self.min_hold_ms = int(ptt_cfg.get("min_hold_ms", 120))
-        if self.ptt_enabled and ptt_cfg.get("device_guid"):
-            self.ptt = WheelPTT(
-                device_guid=str(ptt_cfg["device_guid"]),
-                button_index=int(ptt_cfg.get("button_index", -1)),
+        # device_guid is the legacy SDL key; device_id is the winmm one.
+        device = ptt_cfg.get("device_id") or ptt_cfg.get("device_guid")
+        backend = ptt_cfg.get("backend", "winmm" if ptt_cfg.get("device_id") else "sdl")
+        if self.ptt_enabled and device:
+            self.ptt = build_ptt(
+                str(device), int(ptt_cfg.get("button_index", -1)), backend
             )
         else:
             self.ptt = NullPTT()
             if self.ptt_enabled:
                 log.warning(
-                    "ptt.enabled is true but no device_guid is set — "
+                    "ptt.enabled is true but no device is set — "
                     "run `crew_chief_hearing_aid setup-ptt`"
                 )
 

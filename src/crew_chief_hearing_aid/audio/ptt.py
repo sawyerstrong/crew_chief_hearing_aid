@@ -233,6 +233,125 @@ class WheelPTT:
             self._stick = None
 
 
+class WinmmPTT:
+    """Default backend. Read-only polling; cannot disturb force feedback.
+
+    SDL degrades FFB even with RawInput and HIDAPI disabled — it still acquires
+    the device through DirectInput, and the wheel goes light the moment the
+    pipeline starts. `joyGetPosEx` never opens the device at all, so the
+    problem is structurally absent rather than mitigated.
+
+    Costs a 32-button ceiling (see winmm_joystick), which for one push-to-talk
+    button is a trade worth making.
+    """
+
+    RECONNECT_INTERVAL_S = 2.0
+
+    def __init__(self, device_id: str, button_index: int) -> None:
+        self.device_id = device_id
+        self.button_index = button_index
+        self._slot: int | None = None
+        self._device_name = "<unresolved>"
+        self._last_reconnect = 0.0
+        self._warned_lost = False
+
+    def open(self) -> None:
+        from . import winmm_joystick as wj
+
+        if not 0 <= self.button_index < wj.MAX_BUTTONS:
+            raise JoystickUnavailable(
+                f"button {self.button_index} is beyond the {wj.MAX_BUTTONS}-button "
+                f"limit of the read-only joystick API; pick a lower button"
+            )
+        device = wj.resolve(self.device_id)
+        if device is None:
+            available = wj.enumerate_devices()
+            listing = "\n  ".join(f"{d} — {d.device_id}" for d in available) or "(none)"
+            raise JoystickUnavailable(
+                f"no device with id {self.device_id!r}. Connected:\n  {listing}"
+            )
+        self._slot = device.slot
+        self._device_name = device.name
+        self._warned_lost = False
+        log.info("push-to-talk on %s button %d", self._device_name, self.button_index)
+
+    def _try_reconnect(self) -> None:
+        now = time.monotonic()
+        if now - self._last_reconnect < self.RECONNECT_INTERVAL_S:
+            return
+        self._last_reconnect = now
+        try:
+            self.open()
+            log.info("push-to-talk reconnected to %s", self._device_name)
+        except JoystickUnavailable:
+            pass
+
+    def is_down(self) -> bool:
+        from . import winmm_joystick as wj
+
+        if self._slot is None:
+            self._try_reconnect()
+            return False
+
+        state = wj.is_button_down(self._slot, self.button_index)
+        if state is None:
+            # Power-cycling the wheel frees the slot, and it may come back in a
+            # different one — which is why identity is manufacturer/product ID
+            # rather than slot number.
+            if not self._warned_lost:
+                log.warning("push-to-talk device lost; will reconnect")
+                self._warned_lost = True
+            self._slot = None
+            self._try_reconnect()
+            return False
+        return state
+
+    def close(self) -> None:
+        self._slot = None
+
+
+def capture_button_winmm(timeout_s: float = 30.0, poll_hz: int = 60) -> JoystickButton | None:
+    """Capture a button press without opening any device."""
+    from . import winmm_joystick as wj
+
+    devices = wj.enumerate_devices()
+    if not devices:
+        raise JoystickUnavailable("no joystick or wheel detected")
+
+    # Baseline, so a button already held when setup starts is not captured.
+    held: set[tuple[int, int]] = set()
+    for device in devices:
+        mask = wj.read_buttons(device.slot) or 0
+        for b in range(min(device.button_count, wj.MAX_BUTTONS)):
+            if mask & (1 << b):
+                held.add((device.slot, b))
+
+    deadline = time.monotonic() + timeout_s
+    interval = 1.0 / poll_hz
+    while time.monotonic() < deadline:
+        for device in devices:
+            mask = wj.read_buttons(device.slot)
+            if mask is None:
+                continue
+            for b in range(min(device.button_count, wj.MAX_BUTTONS)):
+                pressed = bool(mask & (1 << b))
+                if pressed and (device.slot, b) not in held:
+                    return JoystickButton(device.device_id, device.name, b)
+                if not pressed:
+                    held.discard((device.slot, b))
+        time.sleep(interval)
+    return None
+
+
+def build_ptt(device_id: str, button_index: int, backend: str = "winmm"):
+    """Factory. `winmm` is the default because SDL degrades force feedback."""
+    if backend == "winmm":
+        return WinmmPTT(device_id, button_index)
+    if backend == "sdl":
+        return WheelPTT(device_id, button_index)
+    raise ValueError(f"unknown ptt backend {backend!r}")
+
+
 class NullPTT:
     """Stand-in when PTT is disabled or unavailable. Always up."""
 

@@ -135,16 +135,24 @@ def cmd_doctor(args) -> int:
     if not ptt_cfg.get("enabled", True):
         print("  ! push-to-talk disabled and wake word is out of scope — no trigger")
         problems += 1
-    elif not ptt_cfg.get("device_guid"):
+    elif not (ptt_cfg.get("device_id") or ptt_cfg.get("device_guid")):
         print("  ! no push-to-talk button bound — run `setup-ptt`")
         problems += 1
     else:
         try:
-            from .audio.ptt import WheelPTT
+            from .audio.ptt import build_ptt
 
-            ptt = WheelPTT(str(ptt_cfg["device_guid"]), int(ptt_cfg.get("button_index", -1)))
+            backend = ptt_cfg.get("backend", "winmm" if ptt_cfg.get("device_id") else "sdl")
+            ptt = build_ptt(
+                str(ptt_cfg.get("device_id") or ptt_cfg["device_guid"]),
+                int(ptt_cfg.get("button_index", -1)),
+                backend,
+            )
             ptt.open()
             print(f"  push-to-talk: {ptt._device_name} button {ptt.button_index}")
+            if backend == "sdl":
+                print("  ! the sdl backend degrades force feedback — re-run `setup-ptt`")
+                problems += 1
             ptt.close()
         except Exception as exc:  # noqa: BLE001 - doctor reports, never raises
             print(f"  ! {exc}")
@@ -444,11 +452,12 @@ def cmd_bindings(args) -> int:
 
 def _capture_ptt(timeout: float) -> dict[str, dict[str, object]] | None:
     """Shared by `setup-ptt` and the `setup` wizard. None means give up."""
-    from .audio.ptt import JoystickUnavailable, capture_button, list_joysticks
+    from .audio import winmm_joystick as wj
+    from .audio.ptt import JoystickUnavailable, capture_button_winmm
 
     try:
-        devices = list_joysticks()
-    except JoystickUnavailable as exc:
+        devices = wj.enumerate_devices()
+    except Exception as exc:  # noqa: BLE001
         print(f"! {exc}", file=sys.stderr)
         return None
 
@@ -457,12 +466,16 @@ def _capture_ptt(timeout: float) -> dict[str, dict[str, object]] | None:
         return None
 
     print("Detected devices:")
-    for _guid, name, buttons in devices:
-        print(f"  {name}  ({buttons} buttons)")
+    for device in devices:
+        print(f"  {device}")
+    print(
+        f"\nOnly buttons 0-{wj.MAX_BUTTONS - 1} can be used: the read-only API that"
+        "\nleaves force feedback alone exposes a 32-button bitmask."
+    )
 
     print(f"\nPress the wheel button you want for push-to-talk ({timeout:.0f}s)...")
     try:
-        button = capture_button(timeout_s=timeout)
+        button = capture_button_winmm(timeout_s=timeout)
     except JoystickUnavailable as exc:
         print(f"! {exc}", file=sys.stderr)
         return None
@@ -475,7 +488,8 @@ def _capture_ptt(timeout: float) -> dict[str, dict[str, object]] | None:
     return {
         "ptt": {
             "enabled": True,
-            "device_guid": button.device_guid,
+            "backend": "winmm",
+            "device_id": button.device_guid,
             "button_index": button.button_index,
         }
     }
